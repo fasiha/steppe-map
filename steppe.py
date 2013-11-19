@@ -97,24 +97,91 @@ def remove_linear(x, xp):
     else:
         return np.hstack(map(remove_linear, x, xp)).reshape(xp.shape)
 
-def grid1dsearch(lon, lat, x, y, proj='moll'):
+def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
     xy = np.vstack([x, y])
-    grid = np.arange(0, 360.0, 1.0)
+    grid = np.arange(-180, 180.0, 1.0)
     errs = np.empty_like(grid)
     for (idx, l) in enumerate(grid):
         p = Proj(proj=proj, lon_0=l)
         xout, yout = p(lon, lat)
         xout, yout = remove_linear(xy, np.vstack([xout, yout]))
         errs[idx] = L2_norm_error(np.vstack([x,y]), np.vstack([xout, yout]))
-    try:
-        import pylab as plt
-        plt.ion()
-        plt.figure()
-        plt.plot(grid, errs)
-    except:
-        print "Couldn't plot!"
-    return (grid, errs)
+    if plot:
+        try:
+            import pylab as plt
+            plt.ion()
+            plt.figure()
+            plt.plot(grid, errs)
+            title = "%s projection, min=%g at %g degrees" % (proj, np.min(errs),
+                                                        grid[np.argmin(errs)])
+            plt.title(title)
+        except:
+            print "Couldn't plot!"
+    return (grid, errs, xout, yout)
+
+def proj1d(recompute=True):
+    """List of 1D-only projections from [1]. Returns list of strings.
+
+    Ones here but not in pseudocylindrical list: ortho
+
+    In pseudocylindrical but >1D so omitted here: loxim.
+
+    DON'T work with pyproj but are in [1]: hataea, quau, dense, parab.
+
+    [1] ftp://ftp.remotesensing.org/proj/OF90-284.pdf
+
+    """
+
+    if recompute is False:
+        return 'sinu,moll,robin,eck1,eck2,eck3,eck4,eck5,eck6,goode,mbtfpp,mbtfpq,mbtfps,putp2,putp5,wink1,boggs,collg,ortho'.split(',')
+
+    pall = 'sinu,moll,robin,eck1,eck2,eck3,eck4,eck5,eck6,goode,hataea,mbtfpp,mbtfpq,mbtfps,putp2,putp5,quau,wink1,boggs,collg,dense,parab,ortho'.split(',')
+
+    (lon, lat, x, y) = loaddata()
+    p = []
+    for proj in pall:
+        try:
+            (grid, errs, _, _) = grid1dsearch(lon, lat, x, y,
+                                              proj=proj, plot=False)
+            print "%s: min=%g @ %g degrees" % (proj, np.min(errs),
+                                               grid[np.argmin(errs)])
+            p.append(proj)
+        except:
+            print "%s didn't work" % (proj,)
+    print p.join(',')
+    return p
+
+def image_show(x, y, xout, yout, imname="small.gif"):
+    """Load and show an image with control points and estimates.
+
+    Given control points in vectors x and y containing pixels, as well as
+    estimates obtained (using some projection), plot both values so they can be
+    visually compared.
+
+    """
+    import pylab as plt
+    plt.ion()
+    im = plt.imread(imname)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    ax.imshow(im)
+
+    annot_helper = lambda x, y, **kwargs: ax.annotate("%g,%g"%(x, y),
+                                            xy=(x, y), xytext=(x+10, y+10),
+                                            size=15,
+                                            arrowprops=dict(facecolor='black',
+                                                            shrink=0.05),
+                                            **kwargs)
+    [annot_helper(xi, yi, color='g') for xi,yi in zip(x, y)]
+    [annot_helper(xi, yi, color='r') for xi,yi in zip(xout, yout)]
+
+    plt.title("Green: control points. Red: fit points.")
+
+
 
 if __name__ == "__main__":
     (lon, lat, x, y) = loaddata()
-    (grid, errs) = grid1dsearch(lon, lat, x, y)
+    (grid, errs, xout, yout) = grid1dsearch(lon, lat, x, y, 'vandg', False)
+    image_show(x,-y,xout,-yout)
