@@ -45,6 +45,83 @@ def L2_norm_error(true, estimated):
     L2 = lambda x: np.sqrt(np.sum(np.abs(x)**2))
     return L2(true - estimated) / L2(true)
 
+def remove_affine(p, q, q_factor=None, skip_factorization=False):
+    """Removes an (unknown) affine transform between two matrixes.
+
+    Given two arrays of the same size, `p` and `q`, finds a matrix `A` and
+    column vector `t`` such that
+
+    `p \approx A * q + t`
+
+    in the least-squares sense, and then computes `qnew = A * q + t`.
+
+    Usage 1 of 3: simple: `qnew = remove_affine(p, q)[0]` returns `qnew`. Note
+    how the function returns a tuple and the only the first element is kept.
+    Understanding the other return value leads us to...
+
+    Usage 2 of 3: complicated: *if* you plan on calling this function repeatedly
+    using the same `q`, you can greatly speeed it up by caching the second
+    element of the returned tuple and providing it to this function.
+
+    ```
+    # set up p and q
+    qnew, q_factor = remove_affine(p, q)
+
+    for i in range(10):
+        # change p, keep q the same
+        p += 1.0
+        qnew, q_factor = remove_affine(p, q, q_factor)
+    ```
+
+    q_factor is guaranteed *not* to change after the first call to remove_affine
+    so you are free to discard q_factor after the first time it's generated. A
+    `q_factor` of `None` automatically causes you to regenerate `q_factor`.
+
+    The first usage example will have the same runtime as the second, because in
+    the former, the factorization will be computed, and you're just discarding
+    it. There is a third option...
+
+    Usage 3 of 3: simple: `qnew = remove_affine(p, q,
+    skip_factorization=True)[0]`. The `skip_factorization` flag will use a
+    non-factorizing solver and will return `q_factor` of `None`.
+
+    By skipping factorization and directly solving, #3 will be faster than #2
+    the first time you call it. But, assuming `q` doesn't change, subsequent
+    calls will be much faster using #2 than #3.
+
+    #1 will be as fast as #2 the first invokation and much slower on subsequent
+    ones.
+
+    Suggestions: if your `q` stays the same, use #2. Otherwise, use #3. if you
+    don't care, use #1.
+
+    NB: `p` and the returned `qnew` will be equal if and only if `p` and `q` are
+    generated as above.
+
+    """
+
+    if q_factor is None:
+        qaug = np.vstack([q, np.ones_like(q[0,:])])
+        Q = np.dot(qaug, qaug.T)
+
+        if skip_factorization:
+            sol = la.lstsq(Q, np.dot(qaug, p.T))
+            q_factor = None
+
+        else:
+            import scipy.linalg as scila
+            q_factor = scila.cho_factor(Q)
+            sol = scila.cho_solve(q_factor, np.dot(qaug, p.T))
+
+    else:
+        sol = scila.cho_solve(q_factor, p.T)
+
+    Ahat = sol[:-1,:].T
+    that = sol[-1,:]
+    qnew = np.dot(Ahat, q) + that[:,np.newaxis]
+    return (qnew, q_factor)
+
+
 def remove_linear(x, xp):
     """Find and remove a linear translation between two vectors.
 
@@ -104,7 +181,8 @@ def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
     for (idx, l) in enumerate(grid):
         p = Proj(proj=proj, lon_0=l)
         xout, yout = p(lon, lat)
-        xout, yout = remove_linear(xy, np.vstack([xout, yout]))
+        #xout, yout = remove_linear(xy, np.vstack([xout, yout]))
+        xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
         errs[idx] = L2_norm_error(np.vstack([x,y]), np.vstack([xout, yout]))
     if plot:
         try:
@@ -115,7 +193,7 @@ def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
             title = "%s projection, min=%g at %g degrees" % (proj, np.min(errs),
                                                         grid[np.argmin(errs)])
             plt.title(title)
-        except:
+        except ImportError:
             print "Couldn't plot!"
     return (grid, errs, xout, yout)
 
@@ -183,5 +261,5 @@ def image_show(x, y, xout, yout, imname="small.gif"):
 
 if __name__ == "__main__":
     (lon, lat, x, y) = loaddata()
-    (grid, errs, xout, yout) = grid1dsearch(lon, lat, x, y, 'vandg', False)
+    (grid, errs, xout, yout) = grid1dsearch(lon, lat, x, y, 'moll', True)
     image_show(x,-y,xout,-yout)
