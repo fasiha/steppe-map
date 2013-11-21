@@ -5,10 +5,6 @@ import numpy as np
 import numpy.linalg as la
 import scipy.linalg as scila
 
-p = Proj(proj='moll', lon_0=-90.0)
-lon, lat = (-120.108, 34.36116666)
-x, y = p(lon, lat)
-lon1, lat1 = p(x, y, inverse=True)
 
 def loaddata(fname="gcp.txt"):
     """Load QGIS-style georeference control points (GCP) file.
@@ -39,9 +35,8 @@ def L2_norm_error(true, estimated):
     The summation is taken over all elements of the inputs: arrays are
     effectively raveled (rasterized).
 
-    To ensure that two numerics that should be "equal" are indeed equal,
-    verifying that this function's' output is near machine precision (see
-    `numpy.spacing`).
+    To ensure that two numerics that should be "equal" are indeed equal, verify
+    that this function's output is near machine precision (see `numpy.spacing`).
 
     """
     L2 = lambda x: np.sqrt(np.sum(np.abs(x)**2))
