@@ -381,6 +381,14 @@ if __name__ == "__main__":
                       description=fit_description,
                       shape=shape, inproj=shapeproj)
 
+    fit_proj = 'robin'
+    fit_v2dfunc = make_vector2dictfunc("lon_0")
+    fit_init = [40.0]
+    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
+                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
+                      description=fit_description,
+                      shape=shape, inproj=shapeproj)
+
     fit_proj = 'aea'
     fit_v2dfunc = make_vector2dictfunc("lon_0,lat_0,lat_1,lat_2")
     fit_init = [80.0, 50, 40, 60]
