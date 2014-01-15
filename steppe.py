@@ -4,7 +4,7 @@ from pyproj import Proj
 import numpy as np
 import numpy.linalg as la
 import scipy.linalg as scila
-
+import scipy.optimize as opt
 
 def loaddata(fname="gcp.txt"):
     """Load QGIS-style georeference control points (GCP) file.
@@ -48,7 +48,7 @@ def remove_affine(p, q, q_factor=None, skip_factorization=False):
     Given two arrays of the same size, `p` and `q`, finds a matrix `A` and
     column vector `t` such that
 
-    `p \approx A * q + t`
+    `p = A * q + t`
 
     in the least-squares sense, and then computes `qnew = A * q + t`. (Notation:
     `matrix + vector` implies the vector is added to each column of the matrix.)
@@ -56,12 +56,13 @@ def remove_affine(p, q, q_factor=None, skip_factorization=False):
     NB: `p` and the returned `qnew` will be equal if and only if `p` is
     generated from `q` via an affine transform (no noise).
 
-    Returns `(qnew, q_factor)`, the latter a matrix factorization that can
-    greatly speeds up subsequent calls to remove_affine *with the same `q`*. If
-    your `q` stays the same for multiple calls, cache `q_factor` and pass it in
-    as a keyword argument; `q_factor` won't change from call to call. However,
-    if your `q` change from call to call, ignore `q_factor` and pass in
-    `skip_factorization=False` to avoid even calculating it.
+    Returns `(qnew, q_factor, Ahat, that)`. `q_factor` is a matrix factorization
+    that can greatly speeds up subsequent calls to remove_affine *with the same
+    `q`*. If your `q` stays the same for multiple calls, cache `q_factor` and
+    pass it in as a keyword argument; `q_factor` won't change from call to call.
+    However, if your `q` change from call to call, ignore `q_factor` and pass in
+    `skip_factorization=False` to avoid even calculating it. `Ahat` and `that`
+    are the estimated values of `A` and `t`.
 
     NB2: the default `q_factor=None` will trigger computation of the
     factorization unless `skip_factorization=False`. Non-`None` `q_factor` will
@@ -72,7 +73,7 @@ def remove_affine(p, q, q_factor=None, skip_factorization=False):
 
     Implements the algorithm described in H. Spath, "Fitting affine and
     orthogonal transformations between two sets of points" in *Mathematical
-    Communications*, vol. 9 (2004), pp. 27--34. http://hrcak.srce.hr/file/1425‎
+    Communications*, vol. 9 (2004), pp. 27--34. http://hrcak.srce.hr/file/1425
 
     """
 
@@ -95,7 +96,7 @@ def remove_affine(p, q, q_factor=None, skip_factorization=False):
     Ahat = sol[:-1,:].T # top square matrix of sol, transposed
     that = sol[-1:,:].T # bottom row vector of sol, transposed
     qnew = np.dot(Ahat, q) + that
-    return (qnew, q_factor)
+    return (qnew, q_factor, Ahat, that)
 
 
 def remove_linear(x, xp):
@@ -150,9 +151,35 @@ def remove_linear(x, xp):
     else:
         return np.hstack(map(remove_linear, x, xp)).reshape(xp.shape)
 
+
+def search(lon, lat, x, y, proj, vec2dictfunc, init):
+    xy = np.vstack([x, y])
+    def func(inputvec):
+        p = Proj(proj=proj, **vec2dictfunc(inputvec))
+        xout, yout = p(lon, lat)
+        xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
+        return L2_norm_error(np.vstack([x,y]), np.vstack([xout, yout]))
+
+    sols = []
+    sols.append(opt.fmin(func, init, full_output=True, disp=False))
+    sols.append(opt.fmin_powell(func, init, full_output=True, disp=False))
+    sols.append(opt.fmin_bfgs(func, init, full_output=True, disp=False))
+
+    (idx_x, idx_fx) = (0, 1)
+    best = np.argmin(map(lambda x: x[idx_fx], sols))
+    return sols[best]
+
+def make_vector2dictfunc(string, delimiter=',', initvec=None):
+    substrings = string.split(delimiter)
+    if initvec and (len(initvec) != len(substrings)):
+        print "string=[%s] not split %d-ways" % (string, len(initvec))
+        return None
+    return lambda x: dict(zip(substrings, np.atleast_1d(x)))
+
+
 def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
     xy = np.vstack([x, y])
-    grid = np.arange(-180, 180.0, 1.0)
+    grid = np.arange(-180, 180.0, .25)
     errs = np.empty_like(grid)
     for (idx, l) in enumerate(grid):
         p = Proj(proj=proj, lon_0=l)
@@ -160,6 +187,7 @@ def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
         #xout, yout = remove_linear(xy, np.vstack([xout, yout]))
         xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
         errs[idx] = L2_norm_error(np.vstack([x,y]), np.vstack([xout, yout]))
+
     if plot:
         try:
             import pylab as plt
@@ -171,6 +199,12 @@ def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
             plt.title(title)
         except ImportError:
             print "Couldn't plot!"
+
+    bestidx = np.argmin(errs)
+    p = Proj(proj=proj, lon_0=grid[bestidx])
+    xout, yout = p(lon, lat)
+    xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
+
     return (grid, errs, xout, yout)
 
 def proj1d(recompute=True):
@@ -202,10 +236,55 @@ def proj1d(recompute=True):
             p.append(proj)
         except:
             print "%s didn't work" % (proj,)
-    print p.join(',')
+    print ",".join(p)
     return p
 
-def image_show(x, y, xout, yout, imname="small.gif"):
+def loadshapefile():
+    import os.path
+    import shapefile
+    import pyproj
+
+    countriespath = os.path.join('ne', 'ne_10m_admin_0_countries',
+                                 'ne_10m_admin_0_countries')
+    coastpath = os.path.join('ne', 'ne_10m_coastline', 'ne_10m_coastline')
+    shppath = coastpath + '.shp'
+    prjpath = coastpath + '.prj'
+
+    try:
+        from osgeo import osr
+
+        # From http://gis.stackexchange.com/questions/17341/
+        prjText = open( prjpath, 'r').read()
+        srs = osr.SpatialReference()
+        if ( srs.ImportFromWkt( prjText ) ):
+            print "error importing .prj information from ", prjpath
+            return (None, None)
+        inProjection = pyproj.Proj( srs.ExportToProj4() )
+    except ImportError:
+        inProjection = pyproj.Proj('+proj=longlat +ellps=WGS84 +no_defs')
+
+    sf = shapefile.Reader(shppath)
+    world = np.vstack(map(lambda (rec,shp): (shp.points),
+                          filter(lambda (rec,shp): rec[0]<=1.0,
+                                 zip(sf.records(), sf.shapes())))).T
+
+    return (world, inProjection)
+
+def shape2pixels(inproj, outproj, shape, Ahat, that):
+    import pyproj
+    shape = pyproj.transform(inproj, outproj, *shape)
+
+    #countries = [c[3] for c in sf.records()]
+    #mongolia = np.array(sf.shape(countries.index('Mongolia')).points).T
+    #mongolia = pyproj.transform(inProjection, outproj, *mongolia)
+
+    xout, yout = np.dot(Ahat, shape) + that
+
+    return np.array([xout, yout])
+
+def image_show(x, y, xout, yout, imname="TheSteppe.jpg", description="",
+               shape=None, inproj=None, outproj=None, Ahat=None, that=None,
+               **shapeargs):
     """Load and show an image with control points and estimates.
 
     Given control points in vectors x and y containing pixels, as well as
@@ -215,27 +294,105 @@ def image_show(x, y, xout, yout, imname="small.gif"):
     """
     import pylab as plt
     plt.ion()
-    im = plt.imread(imname)
+    try:
+        im = plt.imread(imname)
+    except IOError:
+        print "Couldn't load %s, can't display image!" % (imname,)
+        return
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
 
-    ax.imshow(im)
+    ax.imshow(im, interpolation='bicubic')
+    imaxis = ax.axis()
 
-    annot_helper = lambda x, y, **kwargs: ax.annotate("%g,%g"%(x, y),
-                                            xy=(x, y), xytext=(x+10, y+10),
-                                            size=15,
-                                            arrowprops=dict(facecolor='black',
-                                                            shrink=0.05),
-                                            **kwargs)
-    [annot_helper(xi, yi, color='g') for xi,yi in zip(x, y)]
-    [annot_helper(xi, yi, color='r') for xi,yi in zip(xout, yout)]
+    def annot_helper (x, y, c='k', **kwargs):
+        ax.annotate("%g,%g"%(x, y),
+                    xy=(x, y), xytext=(x+30, y+30),
+                    size=15,
+                    arrowprops=dict(facecolor=c,
+                                    width=1.0, frac=0.5),
+                    color=c,
+                    **kwargs)
 
-    plt.title("Green: control points. Red: fit points.")
+    [annot_helper(xi, yi, 'g') for xi,yi in zip(x, y)]
+    [annot_helper(xi, yi, 'r') for xi,yi in zip(xout, yout)]
 
+    plt.title(description + " (Green: control points, red: fit points)")
+
+    if shape is not None:
+        (shapex, shapey) = shape2pixels(inproj, outproj, shape, Ahat, that)
+        plt.plot(shapex, -shapey, marker='.', markersize=1.0,
+                 linestyle='none', hold=True, **shapeargs)
+
+    ax.axis(imaxis)
+    plt.show()
+
+    return ax
+
+def searchsolution2xy(lon, lat, x, y, proj, vec2dictfunc, solvec, plot=True,
+                      description="", shape=None, inproj=None):
+    xy = np.vstack([x, y])
+    solutionvec = solvec[0]
+    solutionerr = solvec[1]
+    p = Proj(proj=proj, **vec2dictfunc(solutionvec))
+    xout, yout = p(lon, lat)
+    ((xout, yout), _,Ahat,that) = remove_affine(xy, np.vstack([xout, yout]))
+
+    if plot:
+        descriptor = "%s%s projection (fit error %.3f)" % (description,
+                                                           proj,
+                                                           solutionerr)
+        ax = image_show(x, -y, xout, -yout,
+                        description=descriptor,
+                        shape=shape, inproj=inproj, outproj=p,
+                        Ahat=Ahat, that=that)
+
+    return (xout, yout, p, Ahat, that, ax)
+
+
+def basemap_helper(lat_0=50.0, lat_1=40.0, lat_2=60.0, lon_0=80.0):
+    (lllon, lllat) = (10.0, 0.0)
+    (urlon, urlat) = (160.0, 80.0)
+    from mpl_toolkits.basemap import Basemap
+    import pylab as plt
+    plt.ion()
+    m = Basemap(projection='aea',
+                lat_0=lat_0, lat_1=lat_1, lat_2=lat_2, lon_0=lon_0,
+                llcrnrlon=lllon, llcrnrlat=lllat,
+                urcrnrlon=urlon, urcrnrlat=urlat)
+    m.drawcoastlines()
+    m.drawcountries()
 
 
 if __name__ == "__main__":
+    (shape, shapeproj) = loadshapefile()
+
     (lon, lat, x, y) = loaddata()
-    (grid, errs, xout, yout) = grid1dsearch(lon, lat, x, y, 'moll', True)
-    image_show(x,-y,xout,-yout)
+
+    # robin, wink1 (aka eck5?) are the best
+    fit_description=''
+
+    fit_proj = 'eck5'
+    fit_v2dfunc = make_vector2dictfunc("lon_0")
+    fit_init = [40.0]
+    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
+                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
+                      description=fit_description,
+                      shape=shape, inproj=shapeproj)
+
+    fit_proj = 'aea'
+    fit_v2dfunc = make_vector2dictfunc("lon_0,lat_0,lat_1,lat_2")
+    fit_init = [80.0, 50, 40, 60]
+    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
+                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
+                      description=fit_description,
+                      shape=shape, inproj=shapeproj)
+
+    fit_proj = 'vandg'
+    fit_v2dfunc = make_vector2dictfunc("lon_0")
+    fit_init = [40.0]
+    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
+                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
+                      description=fit_description,
+                      shape=shape, inproj=shapeproj)
