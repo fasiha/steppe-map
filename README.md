@@ -28,7 +28,7 @@ To see the original image on top of the GCPs, one needs the original image: it's
 
 To see the coastline, one needs
 
-- Natural Earth, specifically, the `ne_10m_coastline` physical dataset
+- Natural Earth, specifically, the `ne_10m_coastline` physical dataset (the code looks for files `./ne/ne_10m_coastline/ne_10m_coastline.*`)
 - pyshp to read Natural Earth shapefiles: [https://code.google.com/p/pyshp/](https://code.google.com/p/pyshp/)
 - GDAL's Python module (`osgeo`) to convert Natural Earth's projection descriptor string (WKT) to a Proj4 descriptor.
 
