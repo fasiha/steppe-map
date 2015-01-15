@@ -1,6 +1,8 @@
 The Steppe, or How to fit arbitrary projections to data
 =======================================================
 
+![The Steppe, Britannica map](http://i.stack.imgur.com/HkApE.gif)
+
 Introduction
 ------------
 
@@ -14,7 +16,7 @@ Currently, the project leverages Pyproj and allows me to specify
 - its parameters (e.g., lon/lat of false origin, and two standard parallels), and
 - an initial numeric guess for these parameters
 
-and after running a function minimization (provided by Scipy), can plot the image with the original and best-fit GCPs, as well as a coastline, courtesy of Natural Earth.
+and after running a nonlinear least squares (provided by Scipy), can plot the image with the original and best-fit GCPs, as well as a coastline, courtesy of Natural Earth.
 
 Requirements
 ------------
@@ -39,9 +41,11 @@ Status
 
 The parameter fitting aspect of the project is reasonably flexible in fitting any Pyproj-supported projection to be fit with as few or as many unknown parameters.
 
-I have found that the Eckert V and Robinson projections give the lowest absolute errors between control points and fitted points, but the resulting projections' coastline can deviate from that of the image, indicating that though close, these aren't this map's projections. I've fitted a couple of other projections (Van Der Grinten and Albers equal-area) as well as numerous pseudocylindrical projections, but none were as good (in terms of error between GCP and fitted points) as these.
+I have found that the Winkel tripel projection gives excellent accuracy in terms of error between control and fitted points, and in terms of visual correctness:
 
-Perhaps some kind soul can give me further advice on projections or methods to try, or double-check my GCPs (made carefully in QGIS).
+![Winkel tripel fit of The Steppe map](http://i.stack.imgur.com/Femgi.jpg)
+
+The algorithm found the best fit to be at central longitude of 47 W.
 
 Technical notes
 ---------------
