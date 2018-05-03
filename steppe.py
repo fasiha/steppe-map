@@ -60,7 +60,7 @@ def remove_affine(p, q, q_factor=None, skip_factorization=False):
     generated from `q` via an affine transform (no noise).
 
     Returns `(qnew, q_factor, Ahat, that)`. `q_factor` is a matrix factorization
-    that can greatly speeds up subsequent calls to remove_affine *with the same
+    that can greatly speed up subsequent calls to remove_affine *with the same
     `q`*. If your `q` stays the same for multiple calls, cache `q_factor` and
     pass it in as a keyword argument; `q_factor` won't change from call to call.
     However, if your `q` change from call to call, ignore `q_factor` and pass in
@@ -420,6 +420,7 @@ if __name__ == "__main__":
         description=fit_description,
         shape=shape,
         inproj=shapeproj)
+    print(p.srs)
 
     recoveredPixels = Ahat @ p(lon, lat) + that
     origPixels = np.vstack([x, y])
@@ -463,3 +464,20 @@ if __name__ == "__main__":
     ])
 
     plt.imsave(fname='out.png', arr=res[::-1, :, :])
+
+    earthRadius = 6378137
+    mPerDeg = np.pi / 180 * earthRadius
+    print(("out.png saved, equirectangular (Plate Carree) projection, with corners: " +
+           "top_left_lon={top_left_lon} top_left_lat={top_left_lat} " +
+           "bottom_right_lon={bottom_right_lon} bottom_right_lat={bottom_right_lat} deg").format(
+               top_left_lon=outLon[0, 0],
+               top_left_lat=outLat[-1, -1],
+               bottom_right_lon=outLon[-1, -1],
+               bottom_right_lat=outLat[0, 0]))
+    cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
+           " {bottom_right_lat} -a_srs EPSG:32662 out.png output.tif").format(
+               top_left_lon=outLon[0, 0] * mPerDeg,
+               top_left_lat=outLat[-1, -1] * mPerDeg,
+               bottom_right_lon=outLon[-1, -1] * mPerDeg,
+               bottom_right_lat=outLat[0, 0] * mPerDeg)
+    print(cmd)
