@@ -383,6 +383,66 @@ def searchsolution2xy(lon,
     return (xout, yout, p, Ahat, that, ax)
 
 
+def listToParams(params):
+    A00, A11, b0, b1, lon = params
+    A = np.diag([A00, A11])
+    b = np.vstack([b0, b1])
+    p = Proj(proj='wintri', lon_0=lon)
+    return A, b, p
+
+
+def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit):
+    """Fine-tune the estimate using lat-only & lon-only edge ticks"""
+    pixToLonlat = lambda x, y, A, b,p: p(*np.linalg.solve(Ahat, np.vstack([x, y]) - b), inverse=True)
+
+    def minimize(params):
+        A, b, p = listToParams(params)
+        # This is re-factoring `A` for every tick, FIXME
+        _, latsHat = pixToLonlat(latsLocs['px'], latsLocs['py'], A, b, p)
+        lonsHat, _ = pixToLonlat(lonsLocs['px'], lonsLocs['py'], A, b, p)
+        return np.sum((lonsHat - lonsLocs['deg'])**2) + np.sum((latsHat - latsLocs['deg'])**2)
+
+    init = [Ainit[0, 0], Ainit[1, 1], binit[0], binit[1], pLonInit]
+    sols = []
+    sols.append(opt.fmin(minimize, init, full_output=True, disp=False))
+    sols.append(opt.fmin_powell(minimize, init, full_output=True, disp=False))
+    sols.append(opt.fmin_bfgs(minimize, init, full_output=True, disp=False))
+    return sols, [listToParams(x[0]) for x in sols]
+
+
+def fineLoad(fname='ticks.points'):
+    lon, lat, x, y = loaddata(fname)
+    latTicks = {'deg': lat[lon == 0], 'px': x[lon == 0], 'py': y[lon == 0]}
+    lonTicks = {'deg': lon[lat == 0], 'px': x[lat == 0], 'py': y[lat == 0]}
+    return lonTicks, latTicks
+
+
+def manualinterpolate(im, A, b, p, degPerPix=0.05):
+    afactor = scila.cho_factor(A)
+    pixToLonlat = lambda x, y: p(*scila.cho_solve(afactor, np.vstack([x, y]) - b), inverse=True)
+
+    height, width, _ = im.shape
+    xs, ys = np.meshgrid(np.arange(width), -np.arange(height))
+    origLon, origLat = pixToLonlat(xs.ravel(), ys.ravel())
+    vecToBounds = lambda x: np.array([np.min(x), np.max(x)])
+    boundLon = vecToBounds(origLon)
+    boundLat = vecToBounds(origLat)
+
+    outLon, outLat = np.meshgrid(
+        np.arange(boundLon[0] - 0.5, boundLon[1] + 0.5, degPerPix),
+        np.arange(boundLat[0] - 0.5, boundLat[1] + 0.5, degPerPix))
+
+    from scipy.interpolate import griddata
+    res = np.dstack([
+        griddata(
+            np.vstack([origLon, origLat]).T,
+            im[:, :, i].ravel(),
+            np.vstack([outLon.ravel(), outLat.ravel()]).T,
+            method='nearest').reshape(outLon.shape) for i in range(3)
+    ])
+    return res, outLon, outLat
+
+
 if __name__ == "__main__":
     (shape, shapeproj) = loadshapefile()
     (lon, lat, x, y) = loaddata()
@@ -444,25 +504,7 @@ if __name__ == "__main__":
     """
     # This probably won't work because the Winkel Triple projection isn't widely supported.
     # Fine. We can do interpolations ourselves!
-    xs, ys = np.meshgrid(np.arange(width), -np.arange(height))
-    origLon, origLat = pixToLonlat(xs.ravel(), ys.ravel())
-    vecToBounds = lambda x: np.array([np.min(x), np.max(x)])
-    boundLon = vecToBounds(origLon)
-    boundLat = vecToBounds(origLat)
-    degPerPix = 0.05
-    outLon, outLat = np.meshgrid(
-        np.arange(boundLon[0] - 0.5, boundLon[1] + 0.5, degPerPix),
-        np.arange(boundLat[0] - 0.5, boundLat[1] + 0.5, degPerPix))
-
-    from scipy.interpolate import griddata
-    res = np.dstack([
-        griddata(
-            np.vstack([origLon, origLat]).T,
-            im[:, :, i].ravel(),
-            np.vstack([outLon.ravel(), outLat.ravel()]).T,
-            method='nearest').reshape(outLon.shape) for i in range(3)
-    ])
-
+    res, outLon, outLat = manualinterpolate(im, Ahat, that, p, degPerPix=0.05)
     plt.imsave(fname='out.png', arr=res[::-1, :, :])
 
     earthRadius = 6378137
@@ -480,4 +522,38 @@ if __name__ == "__main__":
                top_left_lat=outLat[-1, -1] * mPerDeg,
                bottom_right_lon=outLon[-1, -1] * mPerDeg,
                bottom_right_lat=outLat[0, 0] * mPerDeg)
+    print(cmd)
+
+    lonTicks, latTicks = fineLoad('ticks.points')
+
+    plt.figure()
+    plt.imshow(im)
+    plt.scatter(lonTicks['px'], -lonTicks['py'])
+    plt.scatter(latTicks['px'], -latTicks['py'])
+    annot_helper = lambda ax, x, y, d, c='k', **kwargs: ax.annotate(
+        "{}".format(d),
+        xy=(x, y),
+        xytext=(x - 50, y + 50),
+        size=7,
+        # arrowprops=dict(facecolor=c, width=1.0, frac=0.5),
+        color=c,
+        **kwargs)
+    for x, y, d in zip(lonTicks['px'], -lonTicks['py'], lonTicks['deg']):
+        annot_helper(plt.gca(), x, y, d, 'g')
+    for x, y, d in zip(latTicks['px'], -latTicks['py'], latTicks['deg']):
+        annot_helper(plt.gca(), x, y, d, 'g')
+
+    finesol, fineparams = fine(lonTicks, latTicks, Ahat, that, float(p.srs.split('+lon_0=')[1]))
+    bestidx = np.argmin([x[1] for x in finesol])
+    bestparams = fineparams[bestidx]
+    Afine, bfine, pfine = bestparams
+    resfine, lonfine, latfine = manualinterpolate(im, Afine, bfine, pfine, .05)
+
+    plt.imsave(fname='outfine.png', arr=resfine[::-1, :, :])
+    cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
+           " {bottom_right_lat} -a_srs EPSG:32662 outfine.png outputfine.tif").format(
+               top_left_lon=lonfine[0, 0] * mPerDeg,
+               top_left_lat=latfine[-1, -1] * mPerDeg,
+               bottom_right_lon=lonfine[-1, -1] * mPerDeg,
+               bottom_right_lat=latfine[0, 0] * mPerDeg)
     print(cmd)
