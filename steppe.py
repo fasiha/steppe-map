@@ -429,7 +429,8 @@ if __name__ == "__main__":
     pixToLonlat = lambda x, y: p(*np.linalg.solve(Ahat, np.vstack([x, y]) - that), inverse=True)
     (top_left_lon, top_left_lat) = pixToLonlat(0, 0)
     import pylab as plt
-    height, width = plt.imread('TheSteppe.jpg').shape[:2]
+    im = plt.imread('TheSteppe.jpg')
+    height, width = im.shape[:2]
     (bottom_right_lon, bottom_right_lat) = pixToLonlat(width, -height)
     cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
            " {bottom_right_lat} -a_srs SR-ORG:7291 TheSteppe.jpg output.tif").format(
@@ -440,3 +441,25 @@ if __name__ == "__main__":
     """
     gdal_translate -of GTiff -a_ullr -3.5083634007813402 70.372117747633 131.7449661509387 3.5400212381456004 -a_srs SR-ORG:7291 TheSteppe.jpg output.tif
     """
+    # This probably won't work because the Winkel Triple projection isn't widely supported.
+    # Fine. We can do interpolations ourselves!
+    xs, ys = np.meshgrid(np.arange(width), -np.arange(height))
+    origLon, origLat = pixToLonlat(xs.ravel(), ys.ravel())
+    vecToBounds = lambda x: np.array([np.min(x), np.max(x)])
+    boundLon = vecToBounds(origLon)
+    boundLat = vecToBounds(origLat)
+    degPerPix = 0.05
+    outLon, outLat = np.meshgrid(
+        np.arange(boundLon[0] - 0.5, boundLon[1] + 0.5, degPerPix),
+        np.arange(boundLat[0] - 0.5, boundLat[1] + 0.5, degPerPix))
+
+    from scipy.interpolate import griddata
+    res = np.dstack([
+        griddata(
+            np.vstack([origLon, origLat]).T,
+            im[:, :, i].ravel(),
+            np.vstack([outLon.ravel(), outLat.ravel()]).T,
+            method='nearest').reshape(outLon.shape) for i in range(3)
+    ])
+
+    plt.imsave(fname='out.png', arr=res[::-1, :, :])
