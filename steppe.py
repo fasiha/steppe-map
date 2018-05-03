@@ -6,6 +6,7 @@ import numpy.linalg as la
 import scipy.linalg as scila
 import scipy.optimize as opt
 
+
 def loaddata(fname="gcp.txt"):
     """Load QGIS-style georeference control points (GCP) file.
 
@@ -19,9 +20,10 @@ def loaddata(fname="gcp.txt"):
     - y (pixel).
 
     """
-    arr = np.genfromtxt(fname, skip_header=1, delimiter=',')[:,:4]
+    arr = np.genfromtxt(fname, skip_header=1, delimiter=',')[:, :4]
     lon, lat, x, y = arr.T
     return (lon, lat, x, y)
+
 
 def L2_norm_error(true, estimated):
     """Compute the normalized L^2 error between two values.
@@ -41,6 +43,7 @@ def L2_norm_error(true, estimated):
     """
     L2 = lambda x: np.sqrt(np.sum(np.abs(x)**2))
     return L2(true - estimated) / L2(true)
+
 
 def remove_affine(p, q, q_factor=None, skip_factorization=False):
     """Removes an (unknown) affine transform between two matrixes.
@@ -77,7 +80,7 @@ def remove_affine(p, q, q_factor=None, skip_factorization=False):
 
     """
 
-    qaug = np.vstack([q, np.ones_like(q[0,:])])
+    qaug = np.vstack([q, np.ones_like(q[0, :])])
     if q_factor is None:
         Q = np.dot(qaug, qaug.T)
 
@@ -93,8 +96,8 @@ def remove_affine(p, q, q_factor=None, skip_factorization=False):
         sol = scila.cho_solve(q_factor, np.dot(qaug, p.T))
 
     # sol.shape is (n+1, n), for n=p.shape[0]
-    Ahat = sol[:-1,:].T # top square matrix of sol, transposed
-    that = sol[-1:,:].T # bottom row vector of sol, transposed
+    Ahat = sol[:-1, :].T  # top square matrix of sol, transposed
+    that = sol[-1:, :].T  # bottom row vector of sol, transposed
     qnew = np.dot(Ahat, q) + that
     return (qnew, q_factor, Ahat, that)
 
@@ -144,8 +147,8 @@ def remove_linear(x, xp):
         raise ValueError("inputs are not same dimension")
 
     if x.ndim == 1:
-        A = np.vstack([xp, np.ones_like(xp)]).T # Data matrix for least-squares
-        slope_intercept = la.lstsq(A, x)[0]     # lstsq returns other stuff too
+        A = np.vstack([xp, np.ones_like(xp)]).T  # Data matrix for least-squares
+        slope_intercept = la.lstsq(A, x)[0]  # lstsq returns other stuff too
         newxp = np.dot(A, slope_intercept)
         return newxp
     else:
@@ -154,11 +157,12 @@ def remove_linear(x, xp):
 
 def search(lon, lat, x, y, proj, vec2dictfunc, init):
     xy = np.vstack([x, y])
+
     def func(inputvec):
         p = Proj(proj=proj, **vec2dictfunc(inputvec))
         xout, yout = p(lon, lat)
         xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
-        return L2_norm_error(np.vstack([x,y]), np.vstack([xout, yout]))
+        return L2_norm_error(np.vstack([x, y]), np.vstack([xout, yout]))
 
     sols = []
     sols.append(opt.fmin(func, init, full_output=True, disp=False))
@@ -169,10 +173,11 @@ def search(lon, lat, x, y, proj, vec2dictfunc, init):
     best = np.argmin(map(lambda x: x[idx_fx], sols))
     return sols[best]
 
+
 def make_vector2dictfunc(string, delimiter=',', initvec=None):
     substrings = string.split(delimiter)
     if initvec and (len(initvec) != len(substrings)):
-        print "string=[%s] not split %d-ways" % (string, len(initvec))
+        print("string=[{}] not split {}-ways".format(string, len(initvec)))
         return None
     return lambda x: dict(zip(substrings, np.atleast_1d(x)))
 
@@ -186,7 +191,7 @@ def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
         xout, yout = p(lon, lat)
         #xout, yout = remove_linear(xy, np.vstack([xout, yout]))
         xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
-        errs[idx] = L2_norm_error(np.vstack([x,y]), np.vstack([xout, yout]))
+        errs[idx] = L2_norm_error(np.vstack([x, y]), np.vstack([xout, yout]))
 
     if plot:
         try:
@@ -195,10 +200,10 @@ def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
             plt.figure()
             plt.plot(grid, errs)
             title = "%s projection, min=%g at %g degrees" % (proj, np.min(errs),
-                                                        grid[np.argmin(errs)])
+                                                             grid[np.argmin(errs)])
             plt.title(title)
         except ImportError:
-            print "Couldn't plot!"
+            print("Couldn't plot!")
 
     bestidx = np.argmin(errs)
     p = Proj(proj=proj, lon_0=grid[bestidx])
@@ -206,6 +211,7 @@ def grid1dsearch(lon, lat, x, y, proj='moll', plot=True):
     xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
 
     return (grid, errs, xout, yout)
+
 
 def proj1d(recompute=True):
     """List of 1D-only projections from [1]. Returns list of strings.
@@ -221,31 +227,31 @@ def proj1d(recompute=True):
     """
 
     if recompute is False:
-        return 'sinu,moll,robin,eck1,eck2,eck3,eck4,eck5,eck6,goode,mbtfpp,mbtfpq,mbtfps,putp2,putp5,wink1,boggs,collg,ortho'.split(',')
+        return 'sinu,moll,robin,eck1,eck2,eck3,eck4,eck5,eck6,goode,mbtfpp,mbtfpq,mbtfps,putp2,putp5,wink1,boggs,collg,ortho'.split(
+            ',')
 
-    pall = 'sinu,moll,robin,eck1,eck2,eck3,eck4,eck5,eck6,goode,hataea,mbtfpp,mbtfpq,mbtfps,putp2,putp5,quau,wink1,boggs,collg,dense,parab,ortho'.split(',')
+    pall = 'sinu,moll,robin,eck1,eck2,eck3,eck4,eck5,eck6,goode,hataea,mbtfpp,mbtfpq,mbtfps,putp2,putp5,quau,wink1,boggs,collg,dense,parab,ortho'.split(
+        ',')
 
     (lon, lat, x, y) = loaddata()
     p = []
     for proj in pall:
-        try:
-            (grid, errs, _, _) = grid1dsearch(lon, lat, x, y,
-                                              proj=proj, plot=False)
-            print "%s: min=%g @ %g degrees" % (proj, np.min(errs),
-                                               grid[np.argmin(errs)])
-            p.append(proj)
-        except:
-            print "%s didn't work" % (proj,)
-    print ",".join(p)
+        # try:
+        (grid, errs, _, _) = grid1dsearch(lon, lat, x, y, proj=proj, plot=False)
+        print("{}: min={} @ {} degrees".format(proj, np.min(errs), grid[np.argmin(errs)]))
+        p.append(proj)
+        # except:
+        #     print ("{} didn't work".format(proj)
+    print(",".join(p))
     return p
+
 
 def loadshapefile():
     import os.path
     import shapefile
     import pyproj
 
-    countriespath = os.path.join('ne', 'ne_10m_admin_0_countries',
-                                 'ne_10m_admin_0_countries')
+    # countriespath = os.path.join('ne', 'ne_10m_admin_0_countries', 'ne_10m_admin_0_countries')
     coastpath = os.path.join('ne', 'ne_10m_coastline', 'ne_10m_coastline')
     shppath = coastpath + '.shp'
     prjpath = coastpath + '.prj'
@@ -254,21 +260,21 @@ def loadshapefile():
         from osgeo import osr
 
         # From http://gis.stackexchange.com/questions/17341/
-        prjText = open( prjpath, 'r').read()
+        prjText = open(prjpath, 'r').read()
         srs = osr.SpatialReference()
-        if ( srs.ImportFromWkt( prjText ) ):
-            print "error importing .prj information from ", prjpath
+        if (srs.ImportFromWkt(prjText)):
+            print("error importing .prj information from ", prjpath)
             return (None, None)
-        inProjection = pyproj.Proj( srs.ExportToProj4() )
+        inProjection = pyproj.Proj(srs.ExportToProj4())
     except ImportError:
         inProjection = pyproj.Proj('+proj=longlat +ellps=WGS84 +no_defs')
 
     sf = shapefile.Reader(shppath)
-    world = np.vstack(map(lambda (rec,shp): (shp.points),
-                          filter(lambda (rec,shp): rec[0]<=1.0,
-                                 zip(sf.records(), sf.shapes())))).T
+    world = np.vstack(
+        [shp.points for (rec, shp) in zip(sf.records(), sf.shapes()) if rec[1] <= 1.0]).T
 
     return (world, inProjection)
+
 
 def shape2pixels(inproj, outproj, shape, Ahat, that):
     import pyproj
@@ -282,8 +288,18 @@ def shape2pixels(inproj, outproj, shape, Ahat, that):
 
     return np.array([xout, yout])
 
-def image_show(x, y, xout, yout, imname="TheSteppe.jpg", description="",
-               shape=None, inproj=None, outproj=None, Ahat=None, that=None,
+
+def image_show(x,
+               y,
+               xout,
+               yout,
+               imname="TheSteppe.jpg",
+               description="",
+               shape=None,
+               inproj=None,
+               outproj=None,
+               Ahat=None,
+               that=None,
                **shapeargs):
     """Load and show an image with control points and estimates.
 
@@ -297,7 +313,7 @@ def image_show(x, y, xout, yout, imname="TheSteppe.jpg", description="",
     try:
         im = plt.imread(imname)
     except IOError:
-        print "Couldn't load %s, can't display image!" % (imname,)
+        print("Couldn't load {}, can't display image!".format(imname))
         return
 
     fig = plt.figure()
@@ -306,101 +322,121 @@ def image_show(x, y, xout, yout, imname="TheSteppe.jpg", description="",
     ax.imshow(im, interpolation='bicubic')
     imaxis = ax.axis()
 
-    def annot_helper (x, y, c='k', **kwargs):
-        ax.annotate("%g,%g"%(x, y),
-                    xy=(x, y), xytext=(x+30, y+30),
-                    size=15,
-                    arrowprops=dict(facecolor=c,
-                                    width=1.0, frac=0.5),
-                    color=c,
-                    **kwargs)
+    def annot_helper(x, y, c='k', **kwargs):
+        ax.annotate(
+            "%g,%g" % (x, y),
+            xy=(x, y),
+            xytext=(x + 30, y + 30),
+            size=15,
+            arrowprops=dict(facecolor=c, width=1.0, frac=0.5),
+            color=c,
+            **kwargs)
 
-    [annot_helper(xi, yi, 'g') for xi,yi in zip(x, y)]
-    [annot_helper(xi, yi, 'r') for xi,yi in zip(xout, yout)]
+    [annot_helper(xi, yi, 'g') for xi, yi in zip(x, y)]
+    [annot_helper(xi, yi, 'r') for xi, yi in zip(xout, yout)]
 
     plt.title(description + " (Green: control points, red: fit points)")
 
     if shape is not None:
         (shapex, shapey) = shape2pixels(inproj, outproj, shape, Ahat, that)
-        plt.plot(shapex, -shapey, marker='.', markersize=1.0,
-                 linestyle='none', hold=True, **shapeargs)
+        plt.plot(
+            shapex, -shapey, marker='.', markersize=1.0, linestyle='none', hold=True, **shapeargs)
 
     ax.axis(imaxis)
     plt.show()
 
     return ax
 
-def searchsolution2xy(lon, lat, x, y, proj, vec2dictfunc, solvec, plot=True,
-                      description="", shape=None, inproj=None):
+
+def searchsolution2xy(lon,
+                      lat,
+                      x,
+                      y,
+                      proj,
+                      vec2dictfunc,
+                      solvec,
+                      plot=True,
+                      description="",
+                      shape=None,
+                      inproj=None):
     xy = np.vstack([x, y])
     solutionvec = solvec[0]
     solutionerr = solvec[1]
     p = Proj(proj=proj, **vec2dictfunc(solutionvec))
     xout, yout = p(lon, lat)
-    ((xout, yout), _,Ahat,that) = remove_affine(xy, np.vstack([xout, yout]))
+    ((xout, yout), _, Ahat, that) = remove_affine(xy, np.vstack([xout, yout]))
 
     if plot:
-        descriptor = "%s%s projection (fit error %.3f)" % (description,
-                                                           proj,
-                                                           solutionerr)
-        ax = image_show(x, -y, xout, -yout,
-                        description=descriptor,
-                        shape=shape, inproj=inproj, outproj=p,
-                        Ahat=Ahat, that=that)
+        descriptor = "%s%s projection (fit error %.3f)" % (description, proj, solutionerr)
+        ax = image_show(
+            x,
+            -y,
+            xout,
+            -yout,
+            description=descriptor,
+            shape=shape,
+            inproj=inproj,
+            outproj=p,
+            Ahat=Ahat,
+            that=that)
 
     return (xout, yout, p, Ahat, that, ax)
 
 
-def basemap_helper(lat_0=50.0, lat_1=40.0, lat_2=60.0, lon_0=80.0):
-    (lllon, lllat) = (10.0, 0.0)
-    (urlon, urlat) = (160.0, 80.0)
-    from mpl_toolkits.basemap import Basemap
-    import pylab as plt
-    plt.ion()
-    m = Basemap(projection='aea',
-                lat_0=lat_0, lat_1=lat_1, lat_2=lat_2, lon_0=lon_0,
-                llcrnrlon=lllon, llcrnrlat=lllat,
-                urcrnrlon=urlon, urcrnrlat=urlat)
-    m.drawcoastlines()
-    m.drawcountries()
-
-
 if __name__ == "__main__":
     (shape, shapeproj) = loadshapefile()
-
     (lon, lat, x, y) = loaddata()
 
-    # robin, wink1 (aka eck5?) are the best
-    fit_description=''
+    fit_description = ''
 
-    fit_proj = 'eck5'
-    fit_v2dfunc = make_vector2dictfunc("lon_0")
-    fit_init = [40.0]
-    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
-                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
-                      description=fit_description,
-                      shape=shape, inproj=shapeproj)
-
-    fit_proj = 'robin'
-    fit_v2dfunc = make_vector2dictfunc("lon_0")
-    fit_init = [40.0]
-    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
-                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
-                      description=fit_description,
-                      shape=shape, inproj=shapeproj)
-
+    # This is how you fit 4 parameters
     fit_proj = 'aea'
     fit_v2dfunc = make_vector2dictfunc("lon_0,lat_0,lat_1,lat_2")
     fit_init = [80.0, 50, 40, 60]
-    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
-                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
-                      description=fit_description,
-                      shape=shape, inproj=shapeproj)
+    searchsolution2xy(
+        lon,
+        lat,
+        x,
+        y,
+        fit_proj,
+        fit_v2dfunc,
+        search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
+        description=fit_description,
+        shape=shape,
+        inproj=shapeproj)
 
-    fit_proj = 'vandg'
+    # I believe this is the projection though: 1-parameter Winkel Triple.
+    fit_proj = 'wintri'
     fit_v2dfunc = make_vector2dictfunc("lon_0")
-    fit_init = [40.0]
-    searchsolution2xy(lon, lat, x, y, fit_proj, fit_v2dfunc,
-                      search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
-                      description=fit_description,
-                      shape=shape, inproj=shapeproj)
+    fit_init = [47.0]
+    xout, yout, p, Ahat, that, ax = searchsolution2xy(
+        lon,
+        lat,
+        x,
+        y,
+        fit_proj,
+        fit_v2dfunc,
+        search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
+        description=fit_description,
+        shape=shape,
+        inproj=shapeproj)
+
+    recoveredPixels = Ahat @ p(lon, lat) + that
+    origPixels = np.vstack([x, y])
+    absoluteError = origPixels - recoveredPixels
+    relativeError = absoluteError / origPixels
+
+    pixToLonlat = lambda x, y: p(*np.linalg.solve(Ahat, np.vstack([x, y]) - that), inverse=True)
+    (top_left_lon, top_left_lat) = pixToLonlat(0, 0)
+    import pylab as plt
+    height, width = plt.imread('TheSteppe.jpg').shape[:2]
+    (bottom_right_lon, bottom_right_lat) = pixToLonlat(width, -height)
+    cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
+           " {bottom_right_lat} -a_srs SR-ORG:7291 TheSteppe.jpg output.tif").format(
+               top_left_lon=top_left_lon[0],
+               top_left_lat=top_left_lat[0],
+               bottom_right_lon=bottom_right_lon[0],
+               bottom_right_lat=bottom_right_lat[0])
+    """
+    gdal_translate -of GTiff -a_ullr -3.5083634007813402 70.372117747633 131.7449661509387 3.5400212381456004 -a_srs SR-ORG:7291 TheSteppe.jpg output.tif
+    """
