@@ -384,8 +384,8 @@ def searchsolution2xy(lon,
 
 
 def listToParams(params):
-    A00, A11, b0, b1, lon = params
-    A = np.diag([A00, A11])
+    A0, A1, A2, A3, b0, b1, lon = params
+    A = np.array([A0, A1, A2, A3]).reshape(2, 2)
     b = np.vstack([b0, b1])
     p = Proj(proj='wintri', lon_0=lon)
     return A, b, p
@@ -402,12 +402,14 @@ def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit):
         lonsHat, _ = pixToLonlat(lonsLocs['px'], lonsLocs['py'], A, b, p)
         return np.sum((lonsHat - lonsLocs['deg'])**2) + np.sum((latsHat - latsLocs['deg'])**2)
 
-    init = [Ainit[0, 0], Ainit[1, 1], binit[0], binit[1], pLonInit]
+    init = Ainit.ravel().tolist() + [binit[0], binit[1], pLonInit]
     sols = []
-    sols.append(opt.fmin(minimize, init, full_output=True, disp=False))
-    sols.append(opt.fmin_powell(minimize, init, full_output=True, disp=False))
+    kws = dict(full_output=True, disp=True, xtol=1e-9, ftol=1e-9, maxiter=10000, maxfun=20000)
+    sols.append(opt.fmin(minimize, init, **kws))
+    sols.append(opt.fmin_powell(minimize, init, **kws))
     sols.append(opt.fmin_bfgs(minimize, init, full_output=True, disp=False))
-    return sols, [listToParams(x[0]) for x in sols]
+    bestidx = np.argmin([x[1] for x in sols])
+    return sols[bestidx], listToParams(sols[bestidx][0])
 
 
 def fineLoad(fname='ticks.points'):
@@ -543,12 +545,9 @@ if __name__ == "__main__":
     for x, y, d in zip(latTicks['px'], -latTicks['py'], latTicks['deg']):
         annot_helper(plt.gca(), x, y, d, 'g')
 
-    finesol, fineparams = fine(lonTicks, latTicks, Ahat, that, float(p.srs.split('+lon_0=')[1]))
-    bestidx = np.argmin([x[1] for x in finesol])
-    bestparams = fineparams[bestidx]
+    bestsol, bestparams = fine(lonTicks, latTicks, Ahat, that, float(p.srs.split('+lon_0=')[1]))
     Afine, bfine, pfine = bestparams
     resfine, lonfine, latfine = manualinterpolate(im, Afine, bfine, pfine, .05)
-
     plt.imsave(fname='outfine.png', arr=resfine[::-1, :, :])
     cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
            " {bottom_right_lat} -a_srs EPSG:32662 outfine.png outputfine.tif").format(
@@ -557,3 +556,8 @@ if __name__ == "__main__":
                bottom_right_lon=lonfine[-1, -1] * mPerDeg,
                bottom_right_lat=latfine[0, 0] * mPerDeg)
     print(cmd)
+    p2l = lambda box:pfine(
+        *np.linalg.solve(Afine,
+                         np.vstack([box['px'], box['py']]) - bfine), inverse=True)
+    e0 = p2l(lonTicks)[0] - lonTicks['deg']
+    e1 = p2l(latTicks)[1] - latTicks['deg']
