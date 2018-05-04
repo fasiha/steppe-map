@@ -400,26 +400,26 @@ def searchsolution2xy(lon,
     return (xout, yout, p, Ahat, that, ax)
 
 
-def listToParams(params):
-    A0, A1, A2, A3, b0, b1, lon = params
+def listToParams(params, xformer):
+    A0, A1, A2, A3, b0, b1, *rest = params
     A = np.array([A0, A1, A2, A3]).reshape(2, 2) * 1e-6
     b = np.vstack([b0, b1]) * 1e2
-    p = Proj(proj='wintri', lon_0=lon)
+    p = Proj(proj='wintri', **xformer(rest))
     return A, b, p
 
 
-def paramsToInit(A, b, pLonInit):
+def paramsToInit(A, b, projParams):
     Ainit = A * 1e6
     binit = b.ravel() * 1e-2
-    return Ainit.ravel().tolist() + [binit[0], binit[1], pLonInit]
+    return Ainit.ravel().tolist() + binit.tolist() + np.atleast_1d(projParams).tolist()
 
 
-def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
+def fine(lonsLocs, latsLocs, Ainit, binit, projParamsInit, projParamsXform, sse=True):
     """Fine-tune the estimate using lat-only & lon-only edge ticks"""
     pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
 
     def minimize(params):
-        A, b, p = listToParams(params)
+        A, b, p = listToParams(params, projParamsXform)
         # This is re-factoring `A` for every tick, FIXME
         _, latsHat = pixToLonlat(latsLocs['px'], latsLocs['py'], A, b, p)
         lonsHat, _ = pixToLonlat(lonsLocs['px'], lonsLocs['py'], A, b, p)
@@ -429,7 +429,7 @@ def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
             [np.max(np.abs(lonsHat - lonsLocs['deg'])),
              np.max(np.abs(latsHat - latsLocs['deg']))])
 
-    init = paramsToInit(Ainit, binit, pLonInit)
+    init = paramsToInit(Ainit, binit, projParamsInit)
     sols = []
     kws = dict(full_output=True, disp=True, xtol=1e-9, ftol=1e-9, maxiter=10000, maxfun=20000)
     sols.append(opt.fmin(minimize, init, **kws))
@@ -469,7 +469,7 @@ def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
                 })))
 
     bestidx = np.argmin([x[1] for x in sols])
-    return sols[bestidx], listToParams(sols[bestidx][0])
+    return sols[bestidx], listToParams(sols[bestidx][0], projParamsXform)
 
 
 def fineLoad(fname='ticks.points'):
@@ -528,10 +528,12 @@ if __name__ == "__main__":
         shape=shape,
         inproj=shapeproj)
 
+    # I believe this is the projection though: 1-parameter Winkel Triple.
     fit_proj = 'wintri'
-    fit_v2dfunc = make_vector2dictfunc("lon_0,lat_1")
-    fit_init = [47., 50.]
-    _, _, w, _, _, _ = searchsolution2xy(
+    srsParams = 'lon_0'
+    fit_v2dfunc = make_vector2dictfunc("srsParams")
+    fit_init = [47.0]
+    xout, yout, p, Ahat, that, ax = searchsolution2xy(
         lon,
         lat,
         x,
@@ -543,10 +545,11 @@ if __name__ == "__main__":
         shape=shape,
         inproj=shapeproj)
 
-    # I believe this is the projection though: 1-parameter Winkel Triple.
+    # with lat_1
     fit_proj = 'wintri'
-    fit_v2dfunc = make_vector2dictfunc("lon_0")
-    fit_init = [47.0]
+    srsParams = 'lon_0,lat_1'
+    fit_v2dfunc = make_vector2dictfunc(srsParams)
+    fit_init = [47., 50.]
     xout, yout, p, Ahat, that, ax = searchsolution2xy(
         lon,
         lat,
@@ -616,10 +619,10 @@ if __name__ == "__main__":
         # arrowprops=dict(facecolor=c, width=1.0, frac=0.5),
         color=c,
         **kwargs)
-    for x, y, d in zip(lonTicks['px'], -lonTicks['py'], lonTicks['deg']):
-        annot_helper(plt.gca(), x, y, d, 'g')
-    for x, y, d in zip(latTicks['px'], -latTicks['py'], latTicks['deg']):
-        annot_helper(plt.gca(), x, y, d, 'g')
+    for xx, yy, d in zip(lonTicks['px'], -lonTicks['py'], lonTicks['deg']):
+        annot_helper(plt.gca(), xx, yy, d, 'g')
+    for xx, yy, d in zip(latTicks['px'], -latTicks['py'], latTicks['deg']):
+        annot_helper(plt.gca(), xx, yy, d, 'g')
 
     pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
     ll2pix = lambda lon, lat, A, b, p: A @ np.vstack(p(lon, lat)) + b
@@ -631,12 +634,16 @@ if __name__ == "__main__":
 
     print(solutionToMaxErr(Ahat, that, p))
 
-    bestsol, (Afine, bfine, pfine) = fine(lonTicks, latTicks, Ahat, that,
-                                          float(p.srs.split('+lon_0=')[1]))
+    searchSrs = lambda srs, key: [float(s.split('=')[1]) for s in srs.split(' ') if key in s][0]
+    xform = make_vector2dictfunc(srsParams)
+    srsToInit = lambda srs, keys: [searchSrs(p.srs, k) for k in keys.split(',')]
+
+    bestsol, (Afine, bfine, pfine) = fine(lonTicks, latTicks, Ahat, that, srsToInit(
+        p.srs, srsParams), xform)
     print(solutionToMaxErr(Afine, bfine, pfine))
 
     bestsol2, (Afine2, bfine2, pfine2) = fine(
-        lonTicks, latTicks, Afine, bfine, float(pfine.srs.split('+lon_0=')[1]), sse=False)
+        lonTicks, latTicks, Afine, bfine, srsToInit(p.srs, srsParams), xform, sse=False)
     print(solutionToMaxErr(Afine2, bfine2, pfine2))
 
     a3, b3, p3 = Afine2, bfine2, pfine2
