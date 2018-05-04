@@ -383,6 +383,7 @@ def searchsolution2xy(lon,
     xout, yout = p(lon, lat)
     ((xout, yout), _, Ahat, that) = remove_affine(xy, np.vstack([xout, yout]))
 
+    ax = None
     if plot:
         descriptor = "%s%s projection (fit error %.3f)" % (description, proj, solutionerr)
         ax = image_show(
@@ -531,7 +532,7 @@ if __name__ == "__main__":
     # I believe this is the projection though: 1-parameter Winkel Triple.
     fit_proj = 'wintri'
     srsParams = 'lon_0'
-    fit_v2dfunc = make_vector2dictfunc("srsParams")
+    fit_v2dfunc = make_vector2dictfunc(srsParams)
     fit_init = [47.0]
     xout, yout, p, Ahat, that, ax = searchsolution2xy(
         lon,
@@ -549,7 +550,7 @@ if __name__ == "__main__":
     fit_proj = 'wintri'
     srsParams = 'lon_0,lat_1'
     fit_v2dfunc = make_vector2dictfunc(srsParams)
-    fit_init = [47., 50.]
+    fit_init = [47., 0.]
     xout, yout, p, Ahat, that, ax = searchsolution2xy(
         lon,
         lat,
@@ -562,6 +563,30 @@ if __name__ == "__main__":
         shape=shape,
         inproj=shapeproj)
     print(p.srs)
+
+    pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
+    ll2pix = lambda lon, lat, A, b, p: A @ np.vstack(p(lon, lat)) + b
+
+    import itertools as it
+    errs = []
+    estimates = []
+    for c in it.combinations(np.vstack([lon, lat, x, y]).T, lat.size - 2):
+        lon0, lat0, x0, y0 = np.vstack(c).T
+        _, _, p0, A0, b0, _ = searchsolution2xy(
+            lon0,
+            lat0,
+            x0,
+            y0,
+            fit_proj,
+            fit_v2dfunc,
+            search(lon0, lat0, x0, y0, fit_proj, fit_v2dfunc, fit_init),
+            plot=False)
+        # sse = np.sum(((A @ p(lon, lat) + b) - np.vstack([x, y]))**2)
+        print(p0.srs)
+        l0 = np.max(np.abs((A0 @ p0(lon, lat) + b0) - np.vstack([x, y])))
+        errs.append(l0)
+        estimates.append([A0, b0, p0])
+    bestEst = estimates[np.argmin(errs)]
 
     recoveredPixels = Ahat @ p(lon, lat) + that
     origPixels = np.vstack([x, y])
@@ -624,9 +649,6 @@ if __name__ == "__main__":
     for xx, yy, d in zip(latTicks['px'], -latTicks['py'], latTicks['deg']):
         annot_helper(plt.gca(), xx, yy, d, 'g')
 
-    pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
-    ll2pix = lambda lon, lat, A, b, p: A @ np.vstack(p(lon, lat)) + b
-
     def solutionToMaxErr(A, b, p):
         e0 = pixToLonlat(lonTicks['px'], lonTicks['py'], A, b, p)[0] - lonTicks['deg']
         e1 = pixToLonlat(latTicks['px'], latTicks['py'], A, b, p)[1] - latTicks['deg']
@@ -643,10 +665,18 @@ if __name__ == "__main__":
     print(solutionToMaxErr(Afine, bfine, pfine))
 
     bestsol2, (Afine2, bfine2, pfine2) = fine(
-        lonTicks, latTicks, Afine, bfine, srsToInit(p.srs, srsParams), xform, sse=False)
+        lonTicks, latTicks, Afine, bfine, srsToInit(pfine.srs, srsParams), xform, sse=False)
     print(solutionToMaxErr(Afine2, bfine2, pfine2))
 
     a3, b3, p3 = Afine2, bfine2, pfine2
+
+    # Try using cross-validation
+    bestsol, cv = fine(lonTicks, latTicks, bestEst[0], bestEst[1],
+                       srsToInit(bestEst[2].srs, srsParams), xform)
+    print(solutionToMaxErr(*cv))
+    bestsol, cv = fine(
+        lonTicks, latTicks, cv[0], cv[1], srsToInit(cv[2].srs, srsParams), xform, sse=False)
+    print(solutionToMaxErr(*cv))
 
     # for iter in range(5):
     #     a3, b3, p3 = fine(
