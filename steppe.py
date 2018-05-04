@@ -418,9 +418,6 @@ if __name__ == "__main__":
     srsParams = 'lon_0,lat_1'
     fit_init = [47., 0]
 
-    srsParams = 'lon_0'
-    fit_init = [47.]
-
     _, _, p, Ahat, that, ax = searchsolution2xy(fit_proj, srsParams, fit_init)
 
     # Load image
