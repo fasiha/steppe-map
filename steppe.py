@@ -437,13 +437,16 @@ def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
     sols.append(opt.fmin_bfgs(minimize, init, full_output=True, disp=True))
     sols.append(opt.fmin_cg(minimize, init, gtol=1e-8, maxiter=10000, full_output=True, disp=True))
     fixmin = lambda res: [res['x'], res['fun']]
-    bounds = (np.array(init) + np.vstack([-5, 5.])).T.tolist()
+    bounds = (np.array(init) + 3.5 * np.vstack([-1, 1.])).T.tolist()
     if sse == False:
         sols.append(
             fixmin(
                 opt.differential_evolution(
                     minimize,
                     bounds,
+                    popsize=20,
+                    mutation=(0.4, 1.1),
+                    recombination=0.5,
                     callback=lambda x, convergence: print('ga cb', x, convergence),
                     disp=True,
                     polish=True)))
@@ -544,12 +547,12 @@ if __name__ == "__main__":
     absoluteError = origPixels - recoveredPixels
     relativeError = absoluteError / origPixels
 
-    pixToLonlat = lambda x, y: p(*np.linalg.solve(Ahat, np.vstack([x, y]) - that), inverse=True)
-    (top_left_lon, top_left_lat) = pixToLonlat(0, 0)
+    pixToLonlat0 = lambda x, y: p(*np.linalg.solve(Ahat, np.vstack([x, y]) - that), inverse=True)
+    (top_left_lon, top_left_lat) = pixToLonlat0(0, 0)
     import pylab as plt
     im = plt.imread('TheSteppe.jpg')
     height, width = im.shape[:2]
-    (bottom_right_lon, bottom_right_lat) = pixToLonlat(width, -height)
+    (bottom_right_lon, bottom_right_lat) = pixToLonlat0(width, -height)
     cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
            " {bottom_right_lat} -a_srs SR-ORG:7291 TheSteppe.jpg output.tif").format(
                top_left_lon=top_left_lon[0],
@@ -600,31 +603,29 @@ if __name__ == "__main__":
     for x, y, d in zip(latTicks['px'], -latTicks['py'], latTicks['deg']):
         annot_helper(plt.gca(), x, y, d, 'g')
 
-    p2l0 = lambda box:p(
-        *np.linalg.solve(Ahat,
-                         np.vstack([box['px'], box['py']]) - that), inverse=True)
-    e0 = p2l0(lonTicks)[0] - lonTicks['deg']
-    e1 = p2l0(latTicks)[1] - latTicks['deg']
-    print(np.max(np.abs(np.hstack([e0, e1]))))
+    pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
+    ll2pix = lambda lon, lat, A, b, p: A @ np.vstack(p(lon, lat)) + b
 
-    bestsol, bestparams = fine(lonTicks, latTicks, Ahat, that, float(p.srs.split('+lon_0=')[1]))
-    Afine, bfine, pfine = bestparams
-    p2l = lambda box:pfine(
-        *np.linalg.solve(Afine,
-                         np.vstack([box['px'], box['py']]) - bfine), inverse=True)
-    e0 = p2l(lonTicks)[0] - lonTicks['deg']
-    e1 = p2l(latTicks)[1] - latTicks['deg']
-    print(np.max(np.abs(np.hstack([e0, e1]))))
+    def solutionToMaxErr(A, b, p):
+        e0 = pixToLonlat(lonTicks['px'], lonTicks['py'], A, b, p)[0] - lonTicks['deg']
+        e1 = pixToLonlat(latTicks['px'], latTicks['py'], A, b, p)[1] - latTicks['deg']
+        return np.max(np.abs(np.hstack([e0, e1])))
 
-    bestsol2, bestparams2 = fine(
+    print(solutionToMaxErr(Ahat, that, p))
+
+    bestsol, (Afine, bfine, pfine) = fine(lonTicks, latTicks, Ahat, that,
+                                          float(p.srs.split('+lon_0=')[1]))
+    print(solutionToMaxErr(Afine, bfine, pfine))
+
+    bestsol2, (Afine2, bfine2, pfine2) = fine(
         lonTicks, latTicks, Afine, bfine, float(pfine.srs.split('+lon_0=')[1]), sse=False)
-    Afine2, bfine2, pfine2 = bestparams2
-    p2l2 = lambda box:pfine2(
-        *np.linalg.solve(Afine2,
-                         np.vstack([box['px'], box['py']]) - bfine2), inverse=True)
-    e0 = p2l2(lonTicks)[0] - lonTicks['deg']
-    e1 = p2l2(latTicks)[1] - latTicks['deg']
-    print(np.max(np.abs(np.hstack([e0, e1]))))
+    print(solutionToMaxErr(Afine2, bfine2, pfine2))
+
+    a3, b3, p3 = Afine2, bfine2, pfine2
+    for iter in range(5):
+        a3, b3, p3 = fine(
+            lonTicks, latTicks, a3, b3, float(p3.srs.split('+lon_0=')[1]), sse=False)[1]
+        print(solutionToMaxErr(a3, b3, p3))
 
     # resfine, lonfine, latfine = manualinterpolate(im, Afine2, bfine2, pfine2, .05)
     # # resfine, lonfine, latfine = manualinterpolate(im, Afine, bfine, pfine, .05)
@@ -643,7 +644,6 @@ if __name__ == "__main__":
     #            bottom_right_lon=lonfine[-1, -1],
     #            bottom_right_lat=latfine[0, 0]))
 
-
     def myim(x, y, *args, **kwargs):
         def extents(f):
             delta = f[1] - f[0]
@@ -661,17 +661,15 @@ if __name__ == "__main__":
 
     # myim(lonfine[0], latfine[:, 0], resfine)
 
-    pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
-    ll2pix = lambda lon, lat, A, b, p: A @ np.vstack(p(lon, lat)) + b
     height, width, _ = im.shape
 
     myim(np.arange(width), -np.arange(height), im)
     plt.gca().invert_yaxis()
     plt.title('fine2')
     for l in range(0, 170, 10):
-        plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), Afine2, bfine2, pfine2))
+        plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), a3, b3, p3))
     for l in range(10, 70, 10):
-        plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, Afine2, bfine2, pfine2))
+        plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, a3, b3, p3))
 
     myim(np.arange(width), -np.arange(height), im)
     plt.gca().invert_yaxis()
