@@ -1,0 +1,9 @@
+**/.DS_Store
+*.tif
+*.jpg
+*.png
+*.json
+lib/
+bin/
+include/
+share/
