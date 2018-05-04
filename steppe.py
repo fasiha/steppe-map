@@ -426,8 +426,8 @@ def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
         if sse:
             return np.sum((lonsHat - lonsLocs['deg'])**2) + np.sum((latsHat - latsLocs['deg'])**2)
         return np.max(
-            [np.max((lonsHat - lonsLocs['deg'])**2),
-             np.max((latsHat - latsLocs['deg'])**2)])
+            [np.max(np.abs(lonsHat - lonsLocs['deg'])),
+             np.max(np.abs(latsHat - latsLocs['deg']))])
 
     init = paramsToInit(Ainit, binit, pLonInit)
     sols = []
@@ -438,17 +438,20 @@ def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
     sols.append(opt.fmin_cg(minimize, init, gtol=1e-8, maxiter=10000, full_output=True, disp=True))
     fixmin = lambda res: [res['x'], res['fun']]
     bounds = (np.array(init) + 3.5 * np.vstack([-1, 1.])).T.tolist()
+    # bounds = (np.array(init) + [20., 9, 9, 20, 5, 5, 1] * np.vstack([-1, 1.])).T.tolist()
+    # bounds = (np.array(init) + [.25, .01, .01, .25, 1, 1, .5] * np.vstack([-1, 1.])).T.tolist()
     if sse == False:
         sols.append(
             fixmin(
                 opt.differential_evolution(
                     minimize,
                     bounds,
-                    popsize=20,
-                    mutation=(0.4, 1.1),
-                    recombination=0.5,
-                    callback=lambda x, convergence: print('ga cb', x, convergence),
+                    # popsize=20,
+                    # maxiter=1000,
+                    # mutation=(0.4, 1.1),
+                    # recombination=0.5,
                     disp=True,
+                    init='random',
                     polish=True)))
     sols.append(
         fixmin(
@@ -514,6 +517,21 @@ if __name__ == "__main__":
     fit_v2dfunc = make_vector2dictfunc("lon_0,lat_0,lat_1,lat_2")
     fit_init = [80.0, 50, 40, 60]
     searchsolution2xy(
+        lon,
+        lat,
+        x,
+        y,
+        fit_proj,
+        fit_v2dfunc,
+        search(lon, lat, x, y, fit_proj, fit_v2dfunc, fit_init),
+        description=fit_description,
+        shape=shape,
+        inproj=shapeproj)
+
+    fit_proj = 'wintri'
+    fit_v2dfunc = make_vector2dictfunc("lon_0,lat_1")
+    fit_init = [47., 50.]
+    _, _, w, _, _, _ = searchsolution2xy(
         lon,
         lat,
         x,
@@ -622,10 +640,11 @@ if __name__ == "__main__":
     print(solutionToMaxErr(Afine2, bfine2, pfine2))
 
     a3, b3, p3 = Afine2, bfine2, pfine2
-    for iter in range(5):
-        a3, b3, p3 = fine(
-            lonTicks, latTicks, a3, b3, float(p3.srs.split('+lon_0=')[1]), sse=False)[1]
-        print(solutionToMaxErr(a3, b3, p3))
+
+    # for iter in range(5):
+    #     a3, b3, p3 = fine(
+    #         lonTicks, latTicks, a3, b3, float(p3.srs.split('+lon_0=')[1]), sse=False)[1]
+    #     print(solutionToMaxErr(a3, b3, p3))
 
     # resfine, lonfine, latfine = manualinterpolate(im, Afine2, bfine2, pfine2, .05)
     # # resfine, lonfine, latfine = manualinterpolate(im, Afine, bfine, pfine, .05)
@@ -643,6 +662,7 @@ if __name__ == "__main__":
     #            top_left_lat=latfine[-1, -1],
     #            bottom_right_lon=lonfine[-1, -1],
     #            bottom_right_lat=latfine[0, 0]))
+
 
     def myim(x, y, *args, **kwargs):
         def extents(f):
