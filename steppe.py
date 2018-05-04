@@ -154,7 +154,6 @@ def loadshapefile():
     import shapefile
     import pyproj
 
-    # countriespath = os.path.join('ne', 'ne_10m_admin_0_countries', 'ne_10m_admin_0_countries')
     coastpath = os.path.join('ne', 'ne_10m_coastline', 'ne_10m_coastline')
     shppath = coastpath + '.shp'
     prjpath = coastpath + '.prj'
@@ -488,13 +487,15 @@ if __name__ == "__main__":
         plt.gca().invert_yaxis()
         plt.title(title)
         for l in range(0, 170, 10):
-            plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), A, b, p))
+            plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), A, b, p), 'r', lw=.5)
         for l in range(10, 70, 10):
-            plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, A, b, p))
+            plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, A, b, p), 'r', lw=.5)
 
     drawImWithGraticules(Afine2, bfine2, pfine2, 'Optimize side-ticks, SSE+L0')
     drawImWithGraticules(Afine, bfine, pfine, 'Optimize side-ticks, just SSE')
-    drawImWithGraticules(Ahat, that, p, 'Optimize GCPs only')
+    drawImWithGraticules(Ahat, that, p, 'Optimize GCPs only, blue dots=GCPs')
+    s = plt.scatter(x, y, c='b')
 
+    plt.show(block=True)
     # Manual interpolation to equirectangular projection. Commented because it doesn't work that great.
     # res, outLon, outLat = manualinterpolate(im, Afine2, bfine2, pfine2, degPerPix=0.05, fname='outfine.png')
