@@ -410,7 +410,7 @@ def listToParams(params):
 
 def paramsToInit(A, b, pLonInit):
     Ainit = A * 1e6
-    binit = b * 1e-2
+    binit = b.ravel() * 1e-2
     return Ainit.ravel().tolist() + [binit[0], binit[1], pLonInit]
 
 
@@ -435,8 +435,18 @@ def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
     sols.append(opt.fmin(minimize, init, **kws))
     sols.append(opt.fmin_powell(minimize, init, **kws))
     sols.append(opt.fmin_bfgs(minimize, init, full_output=True, disp=True))
-    sols.append(opt.fmin_cg(minimize, init, gtol=1e-8, full_output=True, disp=True))
+    sols.append(opt.fmin_cg(minimize, init, gtol=1e-8, maxiter=10000, full_output=True, disp=True))
     fixmin = lambda res: [res['x'], res['fun']]
+    bounds = (np.array(init) + np.vstack([-5, 5.])).T.tolist()
+    if sse == False:
+        sols.append(
+            fixmin(
+                opt.differential_evolution(
+                    minimize,
+                    bounds,
+                    callback=lambda x, convergence: print('ga cb', x, convergence),
+                    disp=True,
+                    polish=True)))
     sols.append(
         fixmin(
             opt.minimize(
