@@ -158,16 +158,34 @@ def remove_linear(x, xp):
 def search(lon, lat, x, y, proj, vec2dictfunc, init):
     xy = np.vstack([x, y])
 
-    def func(inputvec):
+    def minimize(inputvec):
         p = Proj(proj=proj, **vec2dictfunc(inputvec))
         xout, yout = p(lon, lat)
         xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
-        return L2_norm_error(np.vstack([x, y]), np.vstack([xout, yout]))
+        # return L2_norm_error(np.vstack([x, y]), np.vstack([xout, yout]))
+        return np.sum((np.vstack([x, y]) - np.vstack([xout, yout]))**2)
 
     sols = []
-    sols.append(opt.fmin(func, init, full_output=True, disp=False))
-    sols.append(opt.fmin_powell(func, init, full_output=True, disp=False))
-    sols.append(opt.fmin_bfgs(func, init, full_output=True, disp=False))
+    kws = dict(full_output=True, disp=True, xtol=1e-9, ftol=1e-9, maxiter=10000, maxfun=20000)
+    sols.append(opt.fmin(minimize, init, **kws))
+    sols.append(opt.fmin_powell(minimize, init, **kws))
+    sols.append(opt.fmin_bfgs(minimize, init, full_output=True, disp=True))
+    sols.append(opt.fmin_cg(minimize, init, gtol=1e-8, full_output=True, disp=True))
+    fixmin = lambda res: [res['x'], res['fun']]
+    sols.append(
+        fixmin(
+            opt.minimize(
+                minimize,
+                init,
+                method="Nelder-Mead",
+                tol=1e-9,
+                options={
+                    "xatol": 1e-9,
+                    "fatol": 1e-9,
+                    "maxfev": 20000,
+                    "maxiter": 10000,
+                    'disp': True
+                })))
 
     (idx_x, idx_fx) = (0, 1)
     best = np.argmin(map(lambda x: x[idx_fx], sols))
@@ -328,7 +346,7 @@ def image_show(x,
             xy=(x, y),
             xytext=(x + 30, y + 30),
             size=15,
-            arrowprops=dict(facecolor=c, width=1.0, frac=0.5),
+            arrowprops=dict(facecolor=c, width=1.0),
             color=c,
             **kwargs)
 
@@ -339,8 +357,7 @@ def image_show(x,
 
     if shape is not None:
         (shapex, shapey) = shape2pixels(inproj, outproj, shape, Ahat, that)
-        plt.plot(
-            shapex, -shapey, marker='.', markersize=1.0, linestyle='none', hold=True, **shapeargs)
+        plt.plot(shapex, -shapey, marker='.', markersize=1.0, linestyle='none', **shapeargs)
 
     ax.axis(imaxis)
     plt.show()
@@ -385,29 +402,56 @@ def searchsolution2xy(lon,
 
 def listToParams(params):
     A0, A1, A2, A3, b0, b1, lon = params
-    A = np.array([A0, A1, A2, A3]).reshape(2, 2)
-    b = np.vstack([b0, b1])
+    A = np.array([A0, A1, A2, A3]).reshape(2, 2) * 1e-6
+    b = np.vstack([b0, b1]) * 1e2
     p = Proj(proj='wintri', lon_0=lon)
     return A, b, p
 
 
-def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit):
+def paramsToInit(A, b, pLonInit):
+    Ainit = A * 1e6
+    binit = b * 1e-2
+    return Ainit.ravel().tolist() + [binit[0], binit[1], pLonInit]
+
+
+def fine(lonsLocs, latsLocs, Ainit, binit, pLonInit, sse=True):
     """Fine-tune the estimate using lat-only & lon-only edge ticks"""
-    pixToLonlat = lambda x, y, A, b,p: p(*np.linalg.solve(Ahat, np.vstack([x, y]) - b), inverse=True)
+    pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
 
     def minimize(params):
         A, b, p = listToParams(params)
         # This is re-factoring `A` for every tick, FIXME
         _, latsHat = pixToLonlat(latsLocs['px'], latsLocs['py'], A, b, p)
         lonsHat, _ = pixToLonlat(lonsLocs['px'], lonsLocs['py'], A, b, p)
-        return np.sum((lonsHat - lonsLocs['deg'])**2) + np.sum((latsHat - latsLocs['deg'])**2)
+        if sse:
+            return np.sum((lonsHat - lonsLocs['deg'])**2) + np.sum((latsHat - latsLocs['deg'])**2)
+        return np.max(
+            [np.max((lonsHat - lonsLocs['deg'])**2),
+             np.max((latsHat - latsLocs['deg'])**2)])
 
-    init = Ainit.ravel().tolist() + [binit[0], binit[1], pLonInit]
+    init = paramsToInit(Ainit, binit, pLonInit)
     sols = []
     kws = dict(full_output=True, disp=True, xtol=1e-9, ftol=1e-9, maxiter=10000, maxfun=20000)
     sols.append(opt.fmin(minimize, init, **kws))
     sols.append(opt.fmin_powell(minimize, init, **kws))
-    sols.append(opt.fmin_bfgs(minimize, init, full_output=True, disp=False))
+    sols.append(opt.fmin_bfgs(minimize, init, full_output=True, disp=True))
+    sols.append(opt.fmin_cg(minimize, init, gtol=1e-8, full_output=True, disp=True))
+    fixmin = lambda res: [res['x'], res['fun']]
+    sols.append(
+        fixmin(
+            opt.minimize(
+                minimize,
+                init,
+                method="Nelder-Mead",
+                tol=1e-9,
+                options={
+                    "xatol": 1e-9,
+                    "fatol": 1e-9,
+                    "maxfev": 20000,
+                    "maxiter": 10000,
+                    'disp': True
+                })))
+
     bestidx = np.argmin([x[1] for x in sols])
     return sols[bestidx], listToParams(sols[bestidx][0])
 
@@ -419,7 +463,7 @@ def fineLoad(fname='ticks.points'):
     return lonTicks, latTicks
 
 
-def manualinterpolate(im, A, b, p, degPerPix=0.05):
+def manualinterpolate(im, A, b, p, outLon=None, outLat=None, degPerPix=0.05):
     afactor = scila.cho_factor(A)
     pixToLonlat = lambda x, y: p(*scila.cho_solve(afactor, np.vstack([x, y]) - b), inverse=True)
 
@@ -430,9 +474,10 @@ def manualinterpolate(im, A, b, p, degPerPix=0.05):
     boundLon = vecToBounds(origLon)
     boundLat = vecToBounds(origLat)
 
-    outLon, outLat = np.meshgrid(
-        np.arange(boundLon[0] - 0.5, boundLon[1] + 0.5, degPerPix),
-        np.arange(boundLat[0] - 0.5, boundLat[1] + 0.5, degPerPix))
+    if outLon is None or outLat is None:
+        outLon, outLat = np.meshgrid(
+            np.arange(boundLon[0] - 0.5, boundLon[1] + 0.5, degPerPix),
+            np.arange(boundLat[0] - 0.5, boundLat[1] + 0.5, degPerPix))
 
     from scipy.interpolate import griddata
     res = np.dstack([
@@ -506,25 +551,25 @@ if __name__ == "__main__":
     """
     # This probably won't work because the Winkel Triple projection isn't widely supported.
     # Fine. We can do interpolations ourselves!
-    res, outLon, outLat = manualinterpolate(im, Ahat, that, p, degPerPix=0.05)
-    plt.imsave(fname='out.png', arr=res[::-1, :, :])
-
     earthRadius = 6378137
     mPerDeg = np.pi / 180 * earthRadius
-    print(("out.png saved, equirectangular (Plate Carree) projection, with corners: " +
-           "top_left_lon={top_left_lon} top_left_lat={top_left_lat} " +
-           "bottom_right_lon={bottom_right_lon} bottom_right_lat={bottom_right_lat} deg").format(
-               top_left_lon=outLon[0, 0],
-               top_left_lat=outLat[-1, -1],
-               bottom_right_lon=outLon[-1, -1],
-               bottom_right_lat=outLat[0, 0]))
-    cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
-           " {bottom_right_lat} -a_srs EPSG:32662 out.png output.tif").format(
-               top_left_lon=outLon[0, 0] * mPerDeg,
-               top_left_lat=outLat[-1, -1] * mPerDeg,
-               bottom_right_lon=outLon[-1, -1] * mPerDeg,
-               bottom_right_lat=outLat[0, 0] * mPerDeg)
-    print(cmd)
+
+    # res, outLon, outLat = manualinterpolate(im, Ahat, that, p, degPerPix=0.05)
+    # plt.imsave(fname='out.png', arr=res[::-1, :, :])
+    # print(("out.png saved, equirectangular (Plate Carree) projection, with corners: " +
+    #        "top_left_lon={top_left_lon} top_left_lat={top_left_lat} " +
+    #        "bottom_right_lon={bottom_right_lon} bottom_right_lat={bottom_right_lat} deg").format(
+    #            top_left_lon=outLon[0, 0],
+    #            top_left_lat=outLat[-1, -1],
+    #            bottom_right_lon=outLon[-1, -1],
+    #            bottom_right_lat=outLat[0, 0]))
+    # cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
+    #        " {bottom_right_lat} -a_srs EPSG:32662 out.png output.tif").format(
+    #            top_left_lon=outLon[0, 0] * mPerDeg,
+    #            top_left_lat=outLat[-1, -1] * mPerDeg,
+    #            bottom_right_lon=outLon[-1, -1] * mPerDeg,
+    #            bottom_right_lat=outLat[0, 0] * mPerDeg)
+    # print(cmd)
 
     lonTicks, latTicks = fineLoad('ticks.points')
 
@@ -545,19 +590,91 @@ if __name__ == "__main__":
     for x, y, d in zip(latTicks['px'], -latTicks['py'], latTicks['deg']):
         annot_helper(plt.gca(), x, y, d, 'g')
 
+    p2l0 = lambda box:p(
+        *np.linalg.solve(Ahat,
+                         np.vstack([box['px'], box['py']]) - that), inverse=True)
+    e0 = p2l0(lonTicks)[0] - lonTicks['deg']
+    e1 = p2l0(latTicks)[1] - latTicks['deg']
+    print(np.max(np.abs(np.hstack([e0, e1]))))
+
     bestsol, bestparams = fine(lonTicks, latTicks, Ahat, that, float(p.srs.split('+lon_0=')[1]))
     Afine, bfine, pfine = bestparams
-    resfine, lonfine, latfine = manualinterpolate(im, Afine, bfine, pfine, .05)
-    plt.imsave(fname='outfine.png', arr=resfine[::-1, :, :])
-    cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
-           " {bottom_right_lat} -a_srs EPSG:32662 outfine.png outputfine.tif").format(
-               top_left_lon=lonfine[0, 0] * mPerDeg,
-               top_left_lat=latfine[-1, -1] * mPerDeg,
-               bottom_right_lon=lonfine[-1, -1] * mPerDeg,
-               bottom_right_lat=latfine[0, 0] * mPerDeg)
-    print(cmd)
     p2l = lambda box:pfine(
         *np.linalg.solve(Afine,
                          np.vstack([box['px'], box['py']]) - bfine), inverse=True)
     e0 = p2l(lonTicks)[0] - lonTicks['deg']
     e1 = p2l(latTicks)[1] - latTicks['deg']
+    print(np.max(np.abs(np.hstack([e0, e1]))))
+
+    bestsol2, bestparams2 = fine(
+        lonTicks, latTicks, Afine, bfine, float(pfine.srs.split('+lon_0=')[1]), sse=False)
+    Afine2, bfine2, pfine2 = bestparams2
+    p2l2 = lambda box:pfine2(
+        *np.linalg.solve(Afine2,
+                         np.vstack([box['px'], box['py']]) - bfine2), inverse=True)
+    e0 = p2l2(lonTicks)[0] - lonTicks['deg']
+    e1 = p2l2(latTicks)[1] - latTicks['deg']
+    print(np.max(np.abs(np.hstack([e0, e1]))))
+
+    # resfine, lonfine, latfine = manualinterpolate(im, Afine2, bfine2, pfine2, .05)
+    # # resfine, lonfine, latfine = manualinterpolate(im, Afine, bfine, pfine, .05)
+    # plt.imsave(fname='outfine.png', arr=resfine[::-1, :, :])
+    # cmd = ("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
+    #        " {bottom_right_lat} -a_srs EPSG:32662 outfine.png outputfine.tif").format(
+    #            top_left_lon=lonfine[0, 0] * mPerDeg,
+    #            top_left_lat=latfine[-1, -1] * mPerDeg,
+    #            bottom_right_lon=lonfine[-1, -1] * mPerDeg,
+    #            bottom_right_lat=latfine[0, 0] * mPerDeg)
+    # print(cmd)
+    # print(("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
+    #        " {bottom_right_lat} -a_srs EPSG:4326 outfine.png outputfine2.tif").format(
+    #            top_left_lon=lonfine[0, 0],
+    #            top_left_lat=latfine[-1, -1],
+    #            bottom_right_lon=lonfine[-1, -1],
+    #            bottom_right_lat=latfine[0, 0]))
+
+
+    def myim(x, y, *args, **kwargs):
+        def extents(f):
+            delta = f[1] - f[0]
+            return [f[0] - delta / 2, f[-1] + delta / 2]
+
+        fig, ax = plt.subplots()
+        im = ax.imshow(
+            *args,
+            **kwargs,
+            aspect='auto',
+            interpolation='none',
+            extent=extents(x) + extents(y),
+            origin='lower')
+        return fig, ax, im
+
+    # myim(lonfine[0], latfine[:, 0], resfine)
+
+    pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
+    ll2pix = lambda lon, lat, A, b, p: A @ np.vstack(p(lon, lat)) + b
+    height, width, _ = im.shape
+
+    myim(np.arange(width), -np.arange(height), im)
+    plt.gca().invert_yaxis()
+    plt.title('fine2')
+    for l in range(0, 170, 10):
+        plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), Afine2, bfine2, pfine2))
+    for l in range(10, 70, 10):
+        plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, Afine2, bfine2, pfine2))
+
+    myim(np.arange(width), -np.arange(height), im)
+    plt.gca().invert_yaxis()
+    plt.title('fine')
+    for l in range(0, 170, 10):
+        plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), Afine, bfine, pfine))
+    for l in range(10, 70, 10):
+        plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, Afine, bfine, pfine))
+
+    myim(np.arange(width), -np.arange(height), im)
+    plt.gca().invert_yaxis()
+    plt.title('Ahat')
+    for l in range(0, 170, 10):
+        plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), Ahat, that, p))
+    for l in range(10, 70, 10):
+        plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, Ahat, that, p))
