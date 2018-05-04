@@ -50,18 +50,26 @@ Status
 
 The parameter fitting aspect of the project is reasonably flexible in fitting any Pyproj-supported projection to be fit with as few or as many unknown parameters. The system also estimates an arbitrary 2D affine transform (scale, rotation, shear, shift, etc.).
 
-After trying several dozen projections, I found that the Winkel Tripel projection gives the best accuracy in terms of error between control and fitted points.
+After trying several dozen projections, I found that the Winkel Tripel projection gives the best accuracy in terms of error between control and fitted points. Below we show the 31 GCPs (included in this repo as `gcp.txt`), the graticules for the projection estimated from them, and the coastline.
 
 ![Winkel tripel, 2-parameter fit of The Steppe map with GCPs](wintri-lon_0-lat_1.png)
 
-We can boost the accuracy of the estimate using the ticks on the edges of the map. We use the above results (from processing just the 31 GCPs) to initialize the search for the 2-parameter Winkel Tripel that best matches these ticks. This reduces the worst-case error between lat/lon values from 4.5 degrees (above) to less than 1.1 degrees:
+This map's SRS:
+```
++units=m +proj=wintri +lon_0=46.08057435794861 +lat_1=36.64778081811434
+```
+
+Note how despite putting several GCPs around the Mediterranean I couldn't beat back the distortion there.
+
+We can boost the accuracy of the estimate using the ticks on the edges of the map (given in `ticks.points` in this repo). We use the above estimate to tweak the projection to matches these ticks. This reduces the worst-case error between lat/lon values from 4.5 degrees (above) to less than 1.1 degrees:
 
 ![Winkel tripel, 2-parameter fit of The Steppe map with GCPs and ticks](wintri-lon_0-lat_1-fine.png)
 
-The best SRS I can come up with is
+This map's SRS:
 ```
 +units=m +proj=wintri +lon_0=43.13683225434687 +lat_1=39.869043318205726
 ```
+But note how, while the graticules are better in the second image, there's worse distortion in the coastline.
 
 The weird thing is, if I fit just a single-parameter Winkel Tripel (just `lon_0`), I get a different distribution of errors but the worst-case deviation is still around 1.1 degrees. 😡. So there's *something* weird going on with this map—either it's not Winkel Tripel, or it's hand-drawn, or it's doing some weird tangent projection.
 

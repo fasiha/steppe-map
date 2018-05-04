@@ -414,8 +414,13 @@ if __name__ == "__main__":
     ### Decide what you want to try to fit
     ### CUSTOMIZE ME!!!
     fit_proj = 'wintri'
+
     srsParams = 'lon_0,lat_1'
     fit_init = [47., 0]
+
+    srsParams = 'lon_0'
+    fit_init = [47.]
+
     _, _, p, Ahat, that, ax = searchsolution2xy(fit_proj, srsParams, fit_init)
 
     # Load image
@@ -486,16 +491,23 @@ if __name__ == "__main__":
         myim(np.arange(width), -np.arange(height), im)
         plt.gca().invert_yaxis()
         plt.title(title)
+
+        (shapex, shapey) = shape2pixels(shapeproj, p, shape, A, b)
+        s = plt.plot(shapex, shapey, marker='.', markersize=1.0, linestyle='none')
+
         for l in range(0, 170, 10):
             plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), A, b, p), 'r', lw=.5)
         for l in range(10, 70, 10):
             plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, A, b, p), 'r', lw=.5)
+        plt.xlim([0, width])
+        plt.ylim([-height, 0])
 
     drawImWithGraticules(Afine2, bfine2, pfine2, 'Optimize side-ticks, SSE+L0')
     drawImWithGraticules(Afine, bfine, pfine, 'Optimize side-ticks, just SSE')
     drawImWithGraticules(Ahat, that, p, 'Optimize GCPs only, blue dots=GCPs')
     s = plt.scatter(x, y, c='b')
 
-    plt.show(block=True)
     # Manual interpolation to equirectangular projection. Commented because it doesn't work that great.
     # res, outLon, outLat = manualinterpolate(im, Afine2, bfine2, pfine2, degPerPix=0.05, fname='outfine.png')
+
+    input('All done, hit enter when done')
