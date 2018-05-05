@@ -1,13 +1,23 @@
 # -*- encoding: utf-8 -*-
 
-from pyproj import Proj
+from pyproj import Proj, transform
 import numpy as np
 import numpy.linalg as la
 import scipy.linalg as scila
 import scipy.optimize as opt
 
+import pylab as plt
+plt.ion()
 
-def loaddata(fname="gcp.txt"):
+
+def wgs84ToDeg(x, y):
+    "Converts lat/lon from epsg:3857 (meters) to degrees"
+    P3857 = Proj(init='epsg:3857')  # wgs84 in meters
+    P4326 = Proj(init='epsg:4326')  # wgs84 in degrees
+    return transform(P3857, P4326, x, y)
+
+
+def loaddata(fname="gcp.txt", wgs84=False):
     """Load QGIS-style georeference control points (GCP) file.
 
     The first line will be skipped, and the rest of the lines are assumed to be
@@ -19,10 +29,40 @@ def loaddata(fname="gcp.txt"):
     - x, pixel, and
     - y (pixel).
 
+    If `wgs84` is truthy, lat/lon are treated as meters and converted to degrees.
     """
     arr = np.genfromtxt(fname, skip_header=1, delimiter=',')[:, :4]
     lon, lat, x, y = arr.T
+    if wgs84:
+        lon, lat = wgs84ToDeg(lon, lat)
     return (lon, lat, x, y)
+
+
+def remove_polynomial2_2d(t, x):
+    """
+    For `t = [[t1], [t2]]` and `x = [[x1], [x2]]`, find `A` (2 by 5) and `b` (2 by 1) such that
+    
+    `t = A @ [[x1], [x2], [x1**2], [x2**2], [x*y]] + b`
+
+    in the least-squares sense. Note that `x` and `t` must have two rows but any number of columns
+    (2 by N).
+
+    Returns a 3-tuple:
+
+    0. A version of `x` with the quadratic relationship removed, `xnew`
+    1. `A`, a 2 by 5 array
+    2. `b`, a 2 by 1 array
+    3. `x2t`, a function such that `x2t(x) = t` to machine precision.
+
+    If `t` is exactly a quadratic function of `x`, then `xnew=t` to machine precision.
+    """
+    maxx = np.max(x)
+    y = np.vstack([x / maxx, x**2 / maxx**2, x[0] * x[1] / maxx**2, np.ones_like(x[0])])
+    Ab = np.linalg.lstsq(y.T, t.T, rcond=None)[0].T
+    A = Ab[:, :-1]
+    b = Ab[:, -1:]
+    x2t = lambda x: (A @ np.vstack([x/maxx, np.array(x/maxx)**2, np.array(x[0]/maxx) * np.array(x[1]/maxx)]) + b)
+    return x2t(x), x2t, A, b
 
 
 def remove_affine(p, q, q_factor=None, skip_factorization=False):
@@ -108,8 +148,8 @@ def search(lon, lat, x, y, proj, vec2dictfunc, init):
     def minimize(inputvec):
         p = Proj(proj=proj, **vec2dictfunc(inputvec))
         xout, yout = p(lon, lat)
-        xout, yout = remove_affine(xy, np.vstack([xout, yout]))[0]
-        return np.sum((np.vstack([x, y]) - np.vstack([xout, yout]))**2)
+        xout, yout = remove_polynomial2_2d(xy, np.vstack([xout, yout]))[0]
+        return np.sum((xy - np.vstack([xout, yout]))**2)
 
     sols = []
     kws = dict(full_output=True, disp=False, xtol=1e-9, ftol=1e-9, maxiter=10000, maxfun=20000)
@@ -178,10 +218,9 @@ def loadshapefile():
     return (world, inProjection)
 
 
-def shape2pixels(inproj, outproj, shape, Ahat, that):
-    import pyproj
-    shape = pyproj.transform(inproj, outproj, *shape)
-    xout, yout = np.dot(Ahat, shape) + that
+def shape2pixels(inproj, outproj, shape, x2t):
+    shape = transform(inproj, outproj, *shape)
+    xout, yout = x2t(shape)
     return np.array([xout, yout])
 
 
@@ -194,8 +233,7 @@ def image_show(x,
                shape=None,
                inproj=None,
                outproj=None,
-               Ahat=None,
-               that=None,
+               x2t=None,
                **shapeargs):
     """Load and show an image with control points and estimates.
 
@@ -203,8 +241,6 @@ def image_show(x,
     estimates obtained (using some projection), plot both values so they can be
     visually compared.
     """
-    import pylab as plt
-    plt.ion()
     try:
         im = plt.imread(imname)
     except IOError:
@@ -233,7 +269,7 @@ def image_show(x,
     plt.title(description + " (Green: control points, red: fit points)")
 
     if shape is not None:
-        (shapex, shapey) = shape2pixels(inproj, outproj, shape, Ahat, that)
+        (shapex, shapey) = shape2pixels(inproj, outproj, shape, x2t)
         plt.plot(shapex, -shapey, marker='.', markersize=1.0, linestyle='none', **shapeargs)
 
     ax.axis(imaxis)
@@ -359,9 +395,25 @@ def manualinterpolate(im, A, b, p, outLon=None, outLat=None, degPerPix=0.05, fna
     return res, outLon, outLat
 
 
+def myim(x, y, *args, **kwargs):
+    def extents(f):
+        delta = f[1] - f[0]
+        return [f[0] - delta / 2, f[-1] + delta / 2]
+
+    fig, ax = plt.subplots()
+    im = ax.imshow(
+        *args,
+        **kwargs,
+        aspect='auto',
+        interpolation='none',
+        extent=extents(x) + extents(y),
+        origin='lower')
+    return fig, ax, im
+
+
 if __name__ == "__main__":
     (shape, shapeproj) = loadshapefile()
-    (lon, lat, x, y) = loaddata()
+    (lon, lat, x, y) = loaddata('gcp29.points', True)
 
     def searchsolution2xy(proj,
                           parametersString,
@@ -379,7 +431,7 @@ if __name__ == "__main__":
         p = Proj(proj=proj, **vec2dictfunc(solutionvec))
         xout, yout = p(lon, lat)
         xy = np.vstack([x, y])
-        ((xout, yout), _, Ahat, that) = remove_affine(xy, np.vstack([xout, yout]))
+        ((xout, yout), x2t, Ahat, that) = remove_polynomial2_2d(xy, np.vstack([xout, yout]))
         ax = None
         if plot:
             descriptor = "%s%s projection (fit error %.3f)" % (description, proj, solutionerr)
@@ -392,33 +444,34 @@ if __name__ == "__main__":
                 shape=shape,
                 inproj=inproj,
                 outproj=p,
-                Ahat=Ahat,
-                that=that)
-        return (xout, yout, p, Ahat, that, ax)
+                x2t=x2t)
+        return (xout, yout, p, x2t, Ahat, that, ax)
 
     pixToLonlat = lambda x, y, A, b, p: p(*np.linalg.solve(A, np.vstack([x, y]) - b), inverse=True)
     ll2pix = lambda lon, lat, A, b, p: A @ np.vstack(p(lon, lat)) + b
+    ll2pix2 = lambda lon, lat, x2t, p: x2t(p(lon, lat))
     earthRadius = 6378137
     mPerDeg = np.pi / 180 * earthRadius
 
     # Some random thing
+    # search(lon, lat, x, y, 'wintri', make_vector2dictfunc('lon_0'), [47.])
+
     searchsolution2xy('aea', "lon_0,lat_0,lat_1,lat_2", [80.0, 50, 40, 60])
     # TWO-parameter Winkel Tripel
-    _, _, p, _, _, _ = searchsolution2xy('wintri', "lon_0,lat_1", [47., 0.])
+    _, _, p, *_ = searchsolution2xy('wintri', "lon_0,lat_1", [47., 0.])
     print("Two-parameter Winkel Tripel SRS: ", p.srs)
     # 1-parameter Winkel Tripel
-    _, _, p, _, _, _ = searchsolution2xy('wintri', "lon_0", [47., 0.])
+    _, _, p, *_ = searchsolution2xy('wintri', "lon_0", [47., 0.])
     print("One-parameter Winkel Tripel SRS: ", p.srs)
 
-    ### CUSTOMIZE ME!!!
+    ### CUSTOMIZE ME!!! ###
     ### Decide what you want to try to fit
-    ### CUSTOMIZE ME!!!
     fit_proj = 'wintri'
 
     srsParams = 'lon_0,lat_1'
     fit_init = [47., 0]
 
-    _, _, p, Ahat, that, ax = searchsolution2xy(fit_proj, srsParams, fit_init)
+    _, _, p, x2t, *_ = searchsolution2xy(fit_proj, srsParams, fit_init)
 
     # Load image
     import pylab as plt
@@ -428,6 +481,26 @@ if __name__ == "__main__":
         print(
             "Geo-control poins (GCPs) expect a 1600x1058 image but TheSteppe.jpg is not that size")
 
+    def drawImWithGraticules(x2t, p, title, im=im):
+        height, width = im.shape[:2]
+        myim(np.arange(width), -np.arange(height), im)
+        plt.gca().invert_yaxis()
+        plt.title(title)
+
+        (shapex, shapey) = shape2pixels(shapeproj, p, shape, x2t)
+        plt.plot(shapex, shapey, marker='.', markersize=1.0, linestyle='none')
+
+        for l in range(0, 170, 10):
+            plt.plot(*ll2pix2(np.ones(100) * l, np.linspace(0, 70, 100), x2t, p), 'r', lw=.5)
+        for l in range(10, 70, 10):
+            plt.plot(*ll2pix2(np.linspace(0, 160, 100), np.ones(100) * l, x2t, p), 'r', lw=.5)
+        plt.xlim([0, width])
+        plt.ylim([-height, 0])
+
+    drawImWithGraticules(x2t, p, 'Optimize GCPs only, blue dots=GCPs')
+    s = plt.scatter(x, y, c='b')
+
+if False:
     # Fine estimation with ticks?
     lonTicks, latTicks = fineLoad('ticks.points')
 
@@ -468,43 +541,32 @@ if __name__ == "__main__":
         lonTicks, latTicks, Afine, bfine, srsToInit(pfine.srs, srsParams), xform, sse=False)
     print("Optimized SSE+L0, worst-case error in deg ", solutionToMaxErr(Afine2, bfine2, pfine2))
 
-    def myim(x, y, *args, **kwargs):
-        def extents(f):
-            delta = f[1] - f[0]
-            return [f[0] - delta / 2, f[-1] + delta / 2]
-
-        fig, ax = plt.subplots()
-        im = ax.imshow(
-            *args,
-            **kwargs,
-            aspect='auto',
-            interpolation='none',
-            extent=extents(x) + extents(y),
-            origin='lower')
-        return fig, ax, im
-
-    def drawImWithGraticules(A, b, p, title, im=im):
-        height, width = im.shape[:2]
-        myim(np.arange(width), -np.arange(height), im)
-        plt.gca().invert_yaxis()
-        plt.title(title)
-
-        (shapex, shapey) = shape2pixels(shapeproj, p, shape, A, b)
-        s = plt.plot(shapex, shapey, marker='.', markersize=1.0, linestyle='none')
-
-        for l in range(0, 170, 10):
-            plt.plot(*ll2pix(np.ones(100) * l, np.linspace(0, 70, 100), A, b, p), 'r', lw=.5)
-        for l in range(10, 70, 10):
-            plt.plot(*ll2pix(np.linspace(0, 160, 100), np.ones(100) * l, A, b, p), 'r', lw=.5)
-        plt.xlim([0, width])
-        plt.ylim([-height, 0])
-
     drawImWithGraticules(Afine2, bfine2, pfine2, 'Optimize side-ticks, SSE+L0')
     drawImWithGraticules(Afine, bfine, pfine, 'Optimize side-ticks, just SSE')
-    drawImWithGraticules(Ahat, that, p, 'Optimize GCPs only, blue dots=GCPs')
-    s = plt.scatter(x, y, c='b')
 
     # Manual interpolation to equirectangular projection. Commented because it doesn't work that great.
     # res, outLon, outLat = manualinterpolate(im, Afine2, bfine2, pfine2, degPerPix=0.05, fname='outfine.png')
 
     input('All done, hit enter when done')
+
+    fullLat = dict(
+        deg=np.hstack([latTicks['deg'], lat]),
+        px=np.hstack([latTicks['px'], x]),
+        py=np.hstack([latTicks['py'], y]))
+    fullLon = dict(
+        deg=np.hstack([lonTicks['deg'], lon]),
+        px=np.hstack([lonTicks['px'], x]),
+        py=np.hstack([lonTicks['py'], y]))
+
+    solfull, (Afull, bfull, pfull) = fine(fullLon, fullLat, Ahat, that, srsToInit(p.srs, srsParams),
+                                          xform)
+    print("Optimized side-ticks, SSE, worst-case error in deg: ",
+          solutionToMaxErr(Afull, bfull, pfull))
+
+    solfull2, (Afull2, bfull2, pfull2) = fine(
+        fullLon, fullLat, Afull, bfull, srsToInit(pfull.srs, srsParams), xform, sse=False)
+    print("Optimized side-ticks, SSE, worst-case error in deg: ",
+          solutionToMaxErr(Afull2, bfull2, pfull2))
+
+    drawImWithGraticules(Afull2, bfull2, pfull2, 'Optimize GCP+side-ticks, SSE+L0')
+    drawImWithGraticules(Afull, bfull, pfull, 'Optimize GCP+side-ticks, just SSE')
