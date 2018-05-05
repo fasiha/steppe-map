@@ -343,7 +343,7 @@ bottom_right_lat={}""".format(fname, outLon[0, 0], outLat[-1, -1], outLon[-1, -1
 
 if __name__ == "__main__":
     (shape, shapeproj) = loadshapefile()
-    (lon, lat, x, y) = loaddata('gcp29.points', True)
+    (lon, lat, x, y) = loaddata('gcp29.points', wgs84=True)
 
     def searchsolution2xy(proj,
                           parametersString,

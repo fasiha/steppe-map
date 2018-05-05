@@ -67,9 +67,23 @@ This map's SRS:
 
 It's unlikely that Britannica's cartographers intended to apply some distortion that needs a quadratic polynomial. My guess is that either the Winkel Tripel isn't the actual projection, or that the map acquired some distortion after it was made—maybe it was hand-traced at some point. (Note how the Norwegian coast in the image is quite bizarre.)
 
+The future
+----------
+
+It should be relatively straightforward to adapt this repo to other cases:
+
+- use [QGIS](https://www.qgis.org/) to create a set of geo-reference control points,
+- export them to disk (ideally in EPSG:3857, but lat/lon degrees are fine too, just, if degrees, just unset the `wgs84` flag to `loaddata`),
+- edit the [`steppe.py`](steppe.py) script to point to the new GCP file and
+- the new image, and you should be good to go.
+
+Feel free to [contact me](https://fasiha.github.io/#contact) via email, GitHub, etc., and I can help, either with this map or with another.
+
 Technical notes
 ---------------
-§1. Note that most of these projections (see [http://www.remotesensing.org/geotiff/proj_list](http://www.remotesensing.org/geotiff/proj_list)) accept false easting and northing parameters, scalars which are added to all Cartesian locations. While the projection fitting can accommodate these readily, this is unnecessary as the we remove any affine (`a*x + b`) transform between the projection's output (in Cartesian space) and the GCPs' pixel locations using [Späth's algorithm (pdf)](http://hrcak.srce.hr/file/1425). In simpler terms, the projection fitting function will find and remove any rotation and translation that stands between the predicted pixel locations and the actual pixel locations --- treating such factors as unknowns to be estimated from data can possibly be detrimental to fit accuracy, and should not be done.
+§1. Note that most of these projections (see [http://www.remotesensing.org/geotiff/proj_list](http://www.remotesensing.org/geotiff/proj_list)) accept false easting and northing parameters, scalars which are added to all Cartesian locations. While the projection fitting can accommodate these readily, this is unnecessary as we remove any affine (`a*x + b`) transform between the projection's output (in Cartesian space) and the GCPs' pixel locations using [Späth's algorithm (pdf)](http://hrcak.srce.hr/file/1425). In simpler terms, the projection fitting function will find and remove any rotation and translation that stands between the predicted pixel locations and the actual pixel locations—treating such factors as unknowns to be estimated from data can possibly be detrimental to fit accuracy, and should not be done.
+
+§2. The above note is only relevant to the poly1 affine fit. The poly2 quadratic fit estimates the entries of a 2 by 6 matrix (`x**2 + y**2 + x + y + x*y + 1`), along with the projection parameters. For the Steppe map, this search converges very quickly.
 
 References
 ----------
