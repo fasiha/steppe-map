@@ -53,3 +53,23 @@ if __name__ == "__main__":
     # Albers equal-area, 4-parameter, poly2 (quadratic)
     p, x2t, t2x, postfit = searchsolution2xy(
         'aea', "lon_0,lat_0,lat_1,lat_2", [80.0, 50, 40, 30], order=1)
+
+    # Load image
+    import pylab as plt
+    im = plt.imread(imname)
+
+    height, width = im.shape[:2]
+    earthRadius = 6378137
+    mPerDeg = np.pi / 180 * earthRadius
+    tl = np.hstack(p(*pixToLonlat2([0], [0], t2x, p)))
+    br = np.hstack(p(*pixToLonlat2([width - 1], [-(height - 1)], t2x, p)))
+    cmd = ('gdal_translate -a_srs "{srs}" -of GTiff -a_ullr {top_left_lon} {top_left_lat} ' +
+           ' {bottom_right_lon} {bottom_right_lat} {imname} image0.tif' +
+           ' && gdalwarp -of GTiff -t_srs EPSG:3857 image0.tif image1.tif').format(
+               srs=p.srs,
+               imname=imname,
+               top_left_lon=br[0],
+               top_left_lat=tl[1],
+               bottom_right_lon=tl[0],
+               bottom_right_lat=br[1])
+    print(cmd)
