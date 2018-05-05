@@ -1,13 +1,16 @@
 # -*- encoding: utf-8 -*-
+"""
+For https://pubs.er.usgs.gov/publication/70136641
+"""
 
 from deproject import *
 
 if __name__ == "__main__":
     plt.ion()
 
+    imname = 'plate-1-150ppi-preview.png'
     (shape, shapeproj) = loadshapefile()
-    (lon, lat, x, y) = loaddata('gcp29.points', wgs84=True)
-    imname = "TheSteppe.jpg"
+    (lon, lat, x, y) = loaddata('plate1.points', wgs84=False)
 
     def searchsolution2xy(proj,
                           parametersString,
@@ -48,27 +51,5 @@ if __name__ == "__main__":
     mPerDeg = np.pi / 180 * earthRadius
 
     # Albers equal-area, 4-parameter, poly2 (quadratic)
-    p, x2t, t2x, *_ = searchsolution2xy('aea', "lon_0,lat_0,lat_1,lat_2", [80.0, 50, 40, 60])
-    plt.savefig('aea.png', dpi=200)
-
-    # TWO-parameter Winkel Tripel, poly1 (affine)
-    p, x2t, t2x, *_ = searchsolution2xy('wintri', "lon_0,lat_1", [47., 0.], order=1)
-    print("Two-parameter Winkel Tripel, affine, SRS: ", p.srs)
-    plt.savefig('wintri-lon_0-lat_1.png', dpi=200)
-
-    # Same as above, but poly2
-    p, x2t, t2x, *_ = searchsolution2xy('wintri', "lon_0,lat_1", [47., 0.], order=2)
-    plt.savefig('wintri-lon_0-lat_1-quadratic.png', dpi=200)
-
-    # Load image
-    import pylab as plt
-    im = plt.imread(imname)
-    height, width = im.shape[:2]
-    if not (height == 1058 and width == 1600):
-        print(
-            "Geo-control poins (GCPs) expect a 1600x1058 image but TheSteppe.jpg is not that size")
-
-    # Manual interpolation to equirectangular projection.
-    print('Equirectangular interpolation started, might take two minutes…', end='')
-    # res, outLon, outLat = manualinterpolate(im, t2x, p, degPerPix=0.05, fname='outfine.png')
-    print(' done!')
+    p, x2t, t2x, postfit = searchsolution2xy(
+        'aea', "lon_0,lat_0,lat_1,lat_2", [80.0, 50, 40, 30], order=1)
