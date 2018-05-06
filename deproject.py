@@ -251,7 +251,7 @@ def image_show(x,
                y,
                xout,
                yout,
-               imname="TheSteppe.jpg",
+               im,
                description="",
                shape=None,
                inproj=None,
@@ -264,12 +264,6 @@ def image_show(x,
     estimates obtained (using some projection), plot both values so they can be
     visually compared.
     """
-    try:
-        im = plt.imread(imname)
-    except IOError:
-        print("Couldn't load {}, can't display image!".format(imname))
-        return
-
     height, width = im.shape[:2]
     _, ax, *_ = myim(np.arange(width), -np.arange(height), im)
     plt.gca().invert_yaxis()
@@ -296,45 +290,56 @@ def image_show(x,
     return ax
 
 
-def manualinterpolate(im, t2x, p, outLon=None, outLat=None, degPerPix=0.05, fname=None):
+def manualinterpolate(im, t2x, x2t, p, degPerPix=None, fname=None):
     pixToLonlat = lambda x, y: p(*t2x([x, y]), inverse=True)
+    ll2pix = lambda lon, lat: x2t(p(lon, lat))
 
     height, width, _ = im.shape
-    xs, ys = np.meshgrid(np.arange(width), -np.arange(height))
+    inx = np.arange(width)
+    iny = -np.arange(height)
+
+    SKIP = 10
+    xs, ys = np.meshgrid(inx[::SKIP], iny[::SKIP])
     origLon, origLat = pixToLonlat(xs.ravel(), ys.ravel())
     vecToBounds = lambda x: np.array([np.min(x), np.max(x)])
     boundLon = vecToBounds(origLon)
     boundLat = vecToBounds(origLat)
 
-    if outLon is None or outLat is None:
-        outLon, outLat = np.meshgrid(
-            np.arange(boundLon[0] - 0.5, boundLon[1] + 0.5, degPerPix),
-            np.arange(boundLat[0] - 0.5, boundLat[1] + 0.5, degPerPix))
+    if not degPerPix:
+        degPerPix = np.min(np.abs(np.diff(origLat.reshape(xs.shape), axis=0)))
+        degPerPix = min(degPerPix, np.min(np.diff(origLon.reshape(xs.shape), axis=1)))
+        degPerPix *= 1.0 / SKIP
 
-    from scipy.interpolate import griddata
-    res = np.dstack([
-        griddata(
-            np.vstack([origLon, origLat]).T,
-            im[:, :, i].ravel(),
-            np.vstack([outLon.ravel(), outLat.ravel()]).T,
-            method='nearest').reshape(outLon.shape) for i in range(3)
-    ])
+    lonvec = np.arange(boundLon[0] - 0.5, boundLon[1] + 0.5, degPerPix)
+    latvec = np.arange(boundLat[0] - 0.5, boundLat[1] + 0.5, degPerPix)
+    outLon, outLat = np.meshgrid(lonvec, latvec)
+    outx, outy = ll2pix(outLon.ravel(), outLat.ravel())
+    outx = outx.reshape(outLat.shape)
+    # map_coordinates doesn't need QGIS' -y axis, just integer indexes, so negative:
+    outy = -outy.reshape(outLat.shape)
+
+    from scipy.ndimage.interpolation import map_coordinates
+    res = np.dstack([map_coordinates(im[:, :, dim], [outy, outx], order=0) for dim in range(3)])
+
     if fname:
         plt.imsave(fname=fname, arr=res[::-1, :, :])
-        earthRadius = 6378137
-        mPerDeg = np.pi / 180 * earthRadius
+
+        plateCarree = Proj(init="EPSG:32662")
+        tl = plateCarree(outLon[0, 0], outLat[-1, -1])
+        br = plateCarree(outLon[-1, -1], outLat[0, 0])
+
         print("""{} saved.
 top_left_lon={},
 top_left_lat={},
 bottom_right_lon={},
 bottom_right_lat={}""".format(fname, outLon[0, 0], outLat[-1, -1], outLon[-1, -1], outLat[0, 0]))
-        print("To convert to a georegistered GeoTIFF, run:")
-        print(("gdal_translate -of GTiff -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
-               " {bottom_right_lat} -a_srs EPSG:32662 {fname} output.tif").format(
-                   top_left_lon=outLon[0, 0] * mPerDeg,
-                   top_left_lat=outLat[-1, -1] * mPerDeg,
-                   bottom_right_lon=outLon[-1, -1] * mPerDeg,
-                   bottom_right_lat=outLat[0, 0] * mPerDeg,
+        print("To convert to a georegistered (Geo)JPEG, run:")
+        print(("gdal_translate -of JPEG -a_ullr {top_left_lon} {top_left_lat} {bottom_right_lon}" +
+               " {bottom_right_lat} -a_srs EPSG:32662 {fname} output.jpg").format(
+                   top_left_lon=tl[0],
+                   top_left_lat=tl[1],
+                   bottom_right_lon=br[0],
+                   bottom_right_lat=br[1],
                    fname=fname))
 
     return res, outLon, outLat
