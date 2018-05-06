@@ -81,9 +81,10 @@ Feel free to [contact me](https://fasiha.github.io/#contact) via email, GitHub, 
 
 Technical notes
 ---------------
-§1. Note that most of these projections (see [http://www.remotesensing.org/geotiff/proj_list](http://www.remotesensing.org/geotiff/proj_list)) accept false easting and northing parameters, scalars which are added to all Cartesian locations. While the projection fitting can accommodate these readily, this is unnecessary as we remove any affine (`a*x + b`) transform between the projection's output (in Cartesian space) and the GCPs' pixel locations using [Späth's algorithm (pdf)](http://hrcak.srce.hr/file/1425). In simpler terms, the projection fitting function will find and remove any rotation and translation that stands between the predicted pixel locations and the actual pixel locations—treating such factors as unknowns to be estimated from data can possibly be detrimental to fit accuracy, and should not be done.
+§1. Note that most of these projections (see [http://www.remotesensing.org/geotiff/proj_list](http://www.remotesensing.org/geotiff/proj_list)) accept false easting and northing parameters, scalars which are added to all Cartesian locations. While the projection fitting can accommodate these readily, this is unnecessary as we remove any affine (`a*x + b`, informally called "poly1") or quadratic (`a * x**2 + b * x + c`, "poly2") transform between the projection's output (in Cartesian space) and the GCPs' pixel locations using [Späth's algorithm (pdf)](http://hrcak.srce.hr/file/1425). In simpler terms—for "poly1", we find and remove any rotation/scale/shift between the projected pixel locations and the GCP pixel locations. For "poly2", we find and remove a larger class of image distortions. I think it's neat that the optimization (i.e., the function minimization) does *not* estimate these—it only deals with the projection's parameters—and affine/quadratic distortions are dealt with separately.
 
-§2. The above note is only relevant to the poly1 affine fit. The poly2 quadratic fit estimates the entries of a 2 by 6 matrix (`x**2 + y**2 + x + y + x*y + 1`), along with the projection parameters. For the Steppe map, this search converges very quickly.
+
+§2. Much of the time, we want to reproject the image to an equirectangular (latlon, or Plate Carrée) projection. I'm trying to figure out how to use GDAL tools to do this, but in the meantime, I just added my own interpolation scheme that works well.
 
 References
 ----------
